@@ -2,10 +2,9 @@ use crate::api::AppState;
 use crate::obs::Metrics;
 use crate::storage::chunkstore::ChunkStore;
 use crate::util::config::{AuthMode, Config};
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::time::Duration;
 use tokio::sync::OnceCell;
 use uuid::Uuid;
@@ -24,12 +23,7 @@ pub async fn setup_pool() -> PgPool {
     let dsn = std::env::var("NSS_POSTGRES_DSN")
         .or_else(|_| std::env::var("DATABASE_URL"))
         .expect("NSS_POSTGRES_DSN or DATABASE_URL must be set");
-    let options = PgConnectOptions::from_str(&dsn)
-        .expect("parse postgres dsn")
-        .statement_cache_capacity(0);
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect_with(options)
+    let pool = crate::meta::db::connect(&dsn)
         .await
         .expect("connect to postgres");
     MIGRATIONS

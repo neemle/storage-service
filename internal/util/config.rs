@@ -544,7 +544,8 @@ fn block_size_for_path(path: &Path) -> Result<u64, String> {
     if res != 0 {
         return Err(format!("Failed to statfs {}", path.display()));
     }
-    Ok(stat.f_bsize as u64)
+    let block_size: u64 = stat.f_bsize;
+    Ok(block_size)
 }
 
 #[cfg(not(unix))]

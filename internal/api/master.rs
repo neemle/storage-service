@@ -79,10 +79,19 @@ async fn ready_handler(State(state): State<AppState>) -> (StatusCode, &'static s
     if !check_data_dirs(&state).await {
         return (StatusCode::SERVICE_UNAVAILABLE, "data dirs not writable");
     }
-    if state.repo.pool().acquire().await.is_err() {
+    if !check_db_ready(&state).await {
         return (StatusCode::SERVICE_UNAVAILABLE, "db not ready");
     }
     (StatusCode::OK, "ok")
+}
+
+async fn check_db_ready(state: &AppState) -> bool {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        state.repo.pool().acquire(),
+    )
+    .await
+    .is_ok_and(|result| result.is_ok())
 }
 
 async fn check_data_dirs(state: &AppState) -> bool {
