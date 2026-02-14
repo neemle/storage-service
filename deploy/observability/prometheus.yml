@@ -1,0 +1,37 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+  external_labels:
+    cluster: neemle-demo
+    role: master-observer
+
+scrape_configs:
+  - job_name: nss-nodes
+    static_configs:
+      - targets:
+          - master:9100
+          - replica1:9100
+          - replica2:9100
+        labels:
+          cluster: neemle-demo
+
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - prometheus:9090
+
+  - job_name: loki
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - loki:3100
+
+  - job_name: promtail
+    static_configs:
+      - targets:
+          - promtail:9080
+
+  - job_name: thanos-sidecar
+    static_configs:
+      - targets:
+          - thanos-sidecar:10902

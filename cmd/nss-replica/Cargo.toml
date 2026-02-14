@@ -1,0 +1,12 @@
+[package]
+name = "nss-replica"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.93"
+
+[dependencies]
+nss_core = { path = "../../internal" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+rustls = { workspace = true }

@@ -1,0 +1,110 @@
+@if (app.settingsOpen()) {
+  <div class="modal-backdrop" (click)="app.closeSettings()">
+    <div class="settings-modal" (click)="$event.stopPropagation()">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button mat-icon-button (click)="app.closeSettings()" title="Close">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-section">
+          <h3>Account</h3>
+          <div class="settings-info">
+            <div class="settings-info-row">
+              <span class="label">Username</span>
+              <span class="value">{{ app.user()?.username }}</span>
+            </div>
+            <div class="settings-info-row">
+              <span class="label">Display name</span>
+              <span class="value">{{ app.user()?.displayName || '-' }}</span>
+            </div>
+            <div class="settings-info-row">
+              <span class="label">Role</span>
+              <span class="value">{{ app.isAdmin() ? 'Administrator' : 'User' }}</span>
+            </div>
+            <div class="settings-info-row">
+              <span class="label">Status</span>
+              <span class="value">{{ app.user()?.status }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3>Appearance</h3>
+          <div class="settings-row">
+            <span class="settings-label">Theme</span>
+            <div class="theme-btns">
+              <button
+                class="theme-btn"
+                [class.active]="app.themeMode() === 'auto'"
+                (click)="app.setTheme('auto')"
+                >
+                Auto
+              </button>
+              <button
+                class="theme-btn"
+                [class.active]="app.themeMode() === 'light'"
+                (click)="app.setTheme('light')"
+                >
+                Light
+              </button>
+              <button
+                class="theme-btn"
+                [class.active]="app.themeMode() === 'dark'"
+                (click)="app.setTheme('dark')"
+                >
+                Dark
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3>Change Password</h3>
+          <form class="password-form" (submit)="app.handleChangePassword(); $event.preventDefault()">
+            <mat-form-field appearance="outline">
+              <mat-label>Current password</mat-label>
+              <input
+                matInput
+                type="password"
+                [value]="app.currentPassword()"
+                #setCurPwd
+                (input)="app.currentPassword.set(setCurPwd.value)"
+                />
+            </mat-form-field>
+            <mat-form-field appearance="outline">
+              <mat-label>New password</mat-label>
+              <input
+                matInput
+                type="password"
+                [value]="app.newPasswordInput()"
+                #setNewPwd
+                (input)="app.newPasswordInput.set(setNewPwd.value)"
+                />
+            </mat-form-field>
+            <mat-form-field appearance="outline">
+              <mat-label>Confirm password</mat-label>
+              <input
+                matInput
+                type="password"
+                [value]="app.confirmPassword()"
+                #setConfPwd
+                (input)="app.confirmPassword.set(setConfPwd.value)"
+                />
+            </mat-form-field>
+            @if (app.passwordChangeError()) {
+              <div
+                class="error-msg"
+                style="margin-top:0;margin-bottom:12px"
+                >
+                {{ app.passwordChangeError() }}
+              </div>
+            }
+            <button mat-raised-button color="primary" type="submit" [disabled]="app.passwordChanging()">
+              {{ app.passwordChanging() ? 'Changing...' : 'Change Password' }}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+}

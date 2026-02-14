@@ -1,0 +1,15 @@
+{
+  "name": "nss-ui-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:base": "playwright test --project=base",
+    "test:ui": "playwright test --project=ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^25.2.3",
+    "typescript": "5.9.3"
+  }
+}

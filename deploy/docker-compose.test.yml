@@ -1,0 +1,118 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: nss
+      POSTGRES_PASSWORD: nss
+      POSTGRES_DB: nss
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "fsync=off"
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "full_page_writes=off"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nss -d nss"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "0:5432"
+
+  master:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.master
+    env_file:
+      - ../.env
+    environment:
+      NSS_MODE: master
+      NSS_POSTGRES_DSN: postgres://nss:nss@postgres:5432/nss?sslmode=disable
+      NSS_DATA_DIRS: /data
+      NSS_INTERNAL_ADVERTISE: http://master:9003
+      NSS_S3_PUBLIC_URL: http://master:9000
+      NSS_CORS_ALLOW_ORIGINS: ${NSS_CORS_ALLOW_ORIGINS:-http://master:9001,http://localhost:9001}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "0:9000"
+      - "0:9001"
+      - "0:9003"
+      - "0:9100"
+    volumes:
+      - master-data:/data
+
+  join-token-seed:
+    image: postgres:18-alpine
+    env_file:
+      - ../.env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: nss
+      DB_PASS: nss
+      DB_BASE: nss
+      NSS_REPLICA1_JOIN_TOKEN: ${NSS_REPLICA1_JOIN_TOKEN:-replica-1-join-token-demo}
+      NSS_REPLICA2_JOIN_TOKEN: ${NSS_REPLICA2_JOIN_TOKEN:-replica-2-join-token-demo}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      master:
+        condition: service_started
+    volumes:
+      - ./observability/seed_join_tokens.sh:/scripts/seed_join_tokens.sh:ro
+    command:
+      - sh
+      - /scripts/seed_join_tokens.sh
+
+  replica:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.replica
+    env_file:
+      - ../.env
+    environment:
+      NSS_MODE: replica
+      NSS_POSTGRES_DSN: postgres://nss:nss@postgres:5432/nss?sslmode=disable
+      NSS_DATA_DIRS: /data
+      NSS_MASTER_URL: http://master:9003
+      NSS_JOIN_TOKEN: ${NSS_REPLICA1_JOIN_TOKEN:-replica-1-join-token-demo}
+      NSS_REPLICA_SUB_MODE: delivery
+      NSS_REPLICA_ADVERTISE: http://replica:9010
+    depends_on:
+      join-token-seed:
+        condition: service_completed_successfully
+      master:
+        condition: service_started
+    ports:
+      - "0:9000"
+      - "0:9010"
+      - "0:9100"
+    volumes:
+      - replica-data:/data
+
+  redis:
+    image: redis:7-alpine
+    profiles:
+      - redis
+    ports:
+      - "0:6379"
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    profiles:
+      - rabbitmq
+    ports:
+      - "0:5672"
+      - "0:15672"
+
+volumes:
+  master-data:
+  replica-data:

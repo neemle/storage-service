@@ -1,0 +1,558 @@
+@if (!user()) {
+  <app-login-page [app]="appVm"></app-login-page>
+}
+
+@if (user() && mustChangePassword()) {
+  <app-password-change-page
+    [app]="appVm"
+  ></app-password-change-page>
+}
+
+<!-- MAIN APP -->
+@if (user() && !mustChangePassword()) {
+  <div class="page page-main">
+    <app-console-header [app]="appVm"></app-console-header>
+    <app-settings-modal [app]="appVm"></app-settings-modal>
+    <app-secret-banner [app]="appVm"></app-secret-banner>
+    <!-- Main Content with Tabs -->
+    <div class="main-content">
+      <mat-tab-group class="tabs-container" [selectedIndex]="tabIndex()" (selectedIndexChange)="setTabIndex($event)">
+        <!-- BUCKETS TAB -->
+        <mat-tab label="Buckets">
+          <div class="tab-panel">
+            <mat-card class="card mb-0">
+              <div class="card-head">
+                <div class="card-head-info">
+                  <mat-icon>folder</mat-icon>
+                  <div><h2>Bucket management</h2><p>Create, rename, and delete storage buckets</p></div>
+                </div>
+                <div class="card-head-actions">
+                  <mat-form-field appearance="outline">
+                    <mat-label>New bucket name</mat-label>
+                    <input matInput [value]="newBucketName()" #bucketInput (input)="newBucketName.set(bucketInput.value)" [disabled]="bucketBusy()" />
+                  </mat-form-field>
+                  <button
+                    mat-mini-fab
+                    color="primary"
+                    (click)="handleCreateBucket()"
+                    [disabled]="bucketBusy()"
+                    title="Create bucket"
+                    aria-label="Create bucket"
+                    >
+                    <i class="fa-solid fa-plus"></i>
+                  </button>
+                </div>
+              </div>
+              @if (buckets().length === 0) {
+                <div class="empty-state">
+                  <mat-icon>folder_open</mat-icon>
+                  <div class="title">No buckets</div>
+                  <div class="desc">Create a bucket to get started</div>
+                </div>
+              }
+              @if (buckets().length > 0) {
+                <div class="data-table bucket-table">
+                  <div class="table-head cols-bucket"><span>Name</span><span>Size</span><span>Access</span><span>Actions</span></div>
+                  @for (bucket of buckets(); track trackBucket($index, bucket)) {
+                    <div class="table-row cols-bucket" [class.renaming]="renamingBucket() === bucket.name">
+                      <div class="cell cell-stack">
+                        <strong>{{ bucket.name }}</strong>
+                        <span class="sub">Created {{ bucket.createdAt | date:'medium' }}</span>
+                      </div>
+                      <div class="cell cell-stack">
+                        <span>{{ formatBytes(getBucketSize(bucket.name)) }}</span>
+                        <span class="sub">{{ getBucketObjectCount(bucket.name) }} objects</span>
+                      </div>
+                      <div class="cell">
+                        <mat-slide-toggle color="primary" [checked]="bucket.publicRead" (change)="handleTogglePublic(bucket)" [disabled]="bucketBusy()">
+                          {{ bucket.publicRead ? 'Public' : 'Private' }}
+                        </mat-slide-toggle>
+                      </div>
+                      <div class="cell cell-actions">
+                        <button
+                          mat-icon-button
+                          (click)="startRenameBucket(bucket.name)"
+                          [disabled]="bucketBusy()"
+                          title="Rename"
+                          aria-label="Rename"
+                          >
+                          <i class="fa-solid fa-pen"></i>
+                        </button>
+                        <button
+                          mat-icon-button
+                          color="warn"
+                          (click)="handleDeleteBucket(bucket.name)"
+                          [disabled]="bucketBusy()"
+                          title="Delete"
+                          aria-label="Delete"
+                          >
+                          <i class="fa-solid fa-trash"></i>
+                        </button>
+                      </div>
+                      @if (renamingBucket() === bucket.name) {
+                        <div class="cell rename-cell">
+                          <div class="rename-form">
+                            <mat-icon>edit</mat-icon>
+                            <mat-form-field appearance="outline">
+                              <mat-label>New bucket name</mat-label>
+                              <input matInput [value]="renameBucketValue()" #renameInput (input)="renameBucketValue.set(renameInput.value)" />
+                            </mat-form-field>
+                            <div class="actions">
+                              <button
+                                mat-mini-fab
+                                color="primary"
+                                (click)="handleRenameBucket(bucket)"
+                                [disabled]="bucketBusy()"
+                                title="Save"
+                                aria-label="Save"
+                                >
+                                <i class="fa-solid fa-check"></i>
+                              </button>
+                              <button mat-icon-button (click)="renamingBucket.set(null)" title="Cancel"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                          </div>
+                        </div>
+                      }
+                    </div>
+                  }
+                </div>
+              }
+            </mat-card>
+          </div>
+        </mat-tab>
+        <!-- OBJECTS TAB -->
+        <mat-tab label="Objects">
+          <div class="tab-panel">
+            <mat-card class="card mb-0">
+              <div class="card-head">
+                <div class="card-head-info">
+                  <mat-icon>description</mat-icon>
+                  <div><h2>Object browser</h2><p>Upload, download, and manage files</p></div>
+                </div>
+                <div class="card-head-actions">
+                  <mat-form-field appearance="outline">
+                    <mat-label>Bucket</mat-label>
+                    <mat-select [value]="selectedBucket()" (selectionChange)="handleSelectBucket($event.value)">
+                      <mat-option value="">Select bucket</mat-option>
+                      @for (b of buckets(); track trackBucket($index, b)) {
+                        <mat-option [value]="b.name">{{ b.name }}</mat-option>
+                      }
+                    </mat-select>
+                  </mat-form-field>
+                  <button mat-icon-button (click)="handleRefreshObjects()" [disabled]="!selectedBucket() || objectLoading()" title="Refresh"><i class="fa-solid fa-rotate"></i></button>
+                </div>
+              </div>
+              <div class="breadcrumb path-bar">
+                <button mat-stroked-button (click)="goRoot()">Root</button>
+                @for (crumb of breadcrumbs(); track trackCrumb($index, crumb)) {
+                  <button mat-stroked-button (click)="goToPrefix(crumb.prefix)">{{ crumb.label }}</button>
+                }
+              </div>
+              <div class="upload-bar">
+                <mat-form-field appearance="outline">
+                  <mat-label>Search files or folders</mat-label>
+                  <input matInput [value]="searchTerm()" #searchIn (input)="searchTerm.set(searchIn.value)" [disabled]="!selectedBucket()" />
+                </mat-form-field>
+                <mat-form-field appearance="outline">
+                  <mat-label>Object name (optional)</mat-label>
+                  <input matInput [value]="uploadKey()" #uploadIn (input)="uploadKey.set(uploadIn.value)" [disabled]="!selectedBucket() || uploading()" />
+                </mat-form-field>
+                <div class="file-upload">
+                  <label>Upload file</label>
+                  <input type="file" #fileIn (change)="handleUpload(fileIn)" [disabled]="!selectedBucket() || uploading()" />
+                </div>
+              </div>
+              @if (objectLoading()) {
+                <div class="empty-state">
+                  <mat-icon class="spin">sync</mat-icon>
+                  <div class="title">Loading...</div>
+                </div>
+              }
+              @if (!objectLoading() && !selectedBucket()) {
+                <div class="empty-state">
+                  <mat-icon>inbox</mat-icon>
+                  <div class="title">Select a bucket</div>
+                  <div class="desc">Choose a bucket to browse files</div>
+                </div>
+              }
+              @if (!objectLoading() && selectedBucket() && viewState().folders.length === 0 && viewState().files.length === 0) {
+                <div class="empty-state">
+                  <mat-icon>cloud_off</mat-icon>
+                  @if (currentPrefix()) {
+                    <div class="title">No objects found in this path.</div>
+                  }
+                  @if (!currentPrefix()) {
+                    <div class="title">Empty</div>
+                  }
+                  @if (!currentPrefix()) {
+                    <div class="desc">Upload files to get started</div>
+                  }
+                </div>
+              }
+              @if (!objectLoading() && selectedBucket() && (viewState().folders.length > 0 || viewState().files.length > 0)) {
+                <div class="data-table file-table">
+                  <div class="table-head cols-file"><span>Name</span><span>Size</span><span>Modified</span><span>Actions</span></div>
+                  @if (currentPrefix()) {
+                    <div class="table-row file-row cols-file">
+                      <div class="cell file-name"><mat-icon>folder</mat-icon><button mat-button class="link" (click)="goUp()">..</button></div>
+                      <div class="cell text-muted">-</div>
+                      <div class="cell text-muted">-</div>
+                      <div class="cell text-muted">Parent</div>
+                    </div>
+                  }
+                  @for (folder of viewState().folders; track trackFolder($index, folder)) {
+                    <div class="table-row file-row cols-file">
+                      <div class="cell file-name"><mat-icon>folder</mat-icon><button mat-button class="link" (click)="enterFolder(folder)">{{ folder }}</button></div>
+                      <div class="cell text-muted">-</div>
+                      <div class="cell text-muted">-</div>
+                      <div class="cell text-muted">Folder</div>
+                    </div>
+                  }
+                  @for (file of viewState().files; track trackObject($index, file)) {
+                    <div class="table-row file-row cols-file">
+                      <div class="cell file-name"><mat-icon>insert_drive_file</mat-icon><span>{{ getBaseName(file.key) }}</span></div>
+                      <div class="cell">{{ formatBytes(file.sizeBytes) }}</div>
+                      <div class="cell">{{ file.lastModified | date:'short' }}</div>
+                      <div class="cell cell-actions">
+                        <button mat-icon-button (click)="openObjectDetails(file)" title="Details" aria-label="Details">
+                          <i class="fa-solid fa-circle-info"></i>
+                        </button>
+                        <button mat-icon-button (click)="handleDownload(file.key)" title="Download" aria-label="Download">
+                          <i class="fa-solid fa-download"></i>
+                        </button>
+                        <button mat-icon-button (click)="startRenameObject(file.key)" title="Rename" aria-label="Rename">
+                          <i class="fa-solid fa-pen"></i>
+                        </button>
+                        <button mat-icon-button color="warn" (click)="handleDeleteObject(file.key)" title="Delete" aria-label="Delete">
+                          <i class="fa-solid fa-trash"></i>
+                        </button>
+                      </div>
+                    </div>
+                    @if (renamingObjectKey() === file.key) {
+                      <div class="table-row rename-row">
+                        <div class="rename-form">
+                          <mat-icon>edit</mat-icon>
+                          <mat-form-field appearance="outline">
+                            <mat-label>New name</mat-label>
+                            <input matInput [value]="renameObjectValue()" #renameObjIn (input)="renameObjectValue.set(renameObjIn.value)" />
+                          </mat-form-field>
+                          <div class="actions">
+                            <button mat-mini-fab color="primary" (click)="handleRenameObject(file.key)" title="Save" aria-label="Save name">
+                              <i class="fa-solid fa-check"></i>
+                            </button>
+                            <button mat-icon-button (click)="cancelRenameObject()" title="Cancel" aria-label="Cancel">
+                              <i class="fa-solid fa-xmark"></i>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    }
+                  }
+                </div>
+              }
+              <!-- Object Details Panel -->
+              @if (objectDetail() && selectedObject()) {
+                <mat-card class="card details-panel object-details">
+                  <mat-card-title>Object properties</mat-card-title>
+                  <mat-card-subtitle>{{ objectDetail()?.key }}</mat-card-subtitle>
+                  <mat-card-content>
+                    <div class="details-grid">
+                      <div><span class="label">Size</span><span class="value">{{ formatBytes(objectDetail()?.sizeBytes ?? 0) }}</span></div>
+                      <div><span class="label">Modified</span><span class="value">{{ objectDetail()?.lastModified | date:'medium' }}</span></div>
+                      <div><span class="label">ETag</span><span class="value">{{ objectDetail()?.etag || 'n/a' }}</span></div>
+                      <div><span class="label">Content Type</span><span class="value">{{ objectDetail()?.contentType || 'n/a' }}</span></div>
+                    </div>
+                    <div class="meta-section">
+                      <div class="row between">
+                        <h4>Metadata</h4>
+                        <button
+                          mat-icon-button
+                          (click)="editingMetadata.set(!editingMetadata())"
+                          [title]="editingMetadata() ? 'Cancel' : 'Edit'"
+                          [attr.aria-label]="editingMetadata() ? 'Cancel' : 'Edit'"
+                          >
+                          <i class="fa-solid" [class.fa-pen]="!editingMetadata()" [class.fa-xmark]="editingMetadata()"></i>
+                        </button>
+                      </div>
+                      @if (editingMetadata()) {
+                        <div class="stack" style="margin-top:12px">
+                          <mat-form-field appearance="outline" class="full-width">
+                            <mat-label>Metadata JSON</mat-label>
+                            <textarea matInput [value]="metadataDraft()" #metaIn (input)="metadataDraft.set(metaIn.value)" rows="6"></textarea>
+                          </mat-form-field>
+                          <div class="row">
+                            <button mat-mini-fab color="primary" (click)="handleSaveMetadata()" title="Save" aria-label="Save metadata">
+                              <i class="fa-solid fa-check"></i>
+                            </button>
+                            <button mat-icon-button (click)="editingMetadata.set(false)" title="Close" aria-label="Close">
+                              <i class="fa-solid fa-xmark"></i>
+                            </button>
+                          </div>
+                        </div>
+                      }
+                      @if (!editingMetadata()) {
+                        <ul class="meta-list">
+                          @if (metadataEntries().length === 0) {
+                            <li class="text-muted">No metadata</li>
+                          }
+                          @for (e of metadataEntries(); track trackMetadata($index, e)) {
+                            <li><strong>{{ e[0] }}</strong><span>{{ e[1] }}</span></li>
+                          }
+                        </ul>
+                      }
+                    </div>
+                    <div class="meta-section">
+                      <div class="row between">
+                        <h4>{{ objectUrl()?.public ? 'Public URL' : 'Download URL' }}</h4>
+                        <button
+                          mat-icon-button
+                          (click)="handleGenerateObjectUrl()"
+                          [disabled]="objectUrlLoading()"
+                          title="Generate URL"
+                          >
+                          <span class="sr-only">Generate URL</span>
+                          <i class="fa-solid" [class.fa-wand-magic-sparkles]="!objectUrlLoading()" [class.fa-spinner]="objectUrlLoading()" [class.fa-spin]="objectUrlLoading()"></i>
+                        </button>
+                      </div>
+                      <mat-form-field appearance="outline" class="full-width" style="margin-top:12px">
+                        <mat-label>URL</mat-label>
+                        <textarea matInput [value]="objectUrl()?.url ?? ''" rows="2" readonly></textarea>
+                      </mat-form-field>
+                      <div class="row">
+                        <button mat-mini-fab color="primary" (click)="handleOpenObjectUrl()" [disabled]="!objectUrl()?.url" title="Open URL" aria-label="Open">
+                          <i class="fa-solid fa-external-link"></i>
+                        </button>
+                        <button mat-icon-button (click)="handleCopyObjectUrl()" [disabled]="!objectUrl()?.url" title="Copy URL" aria-label="Copy">
+                          <i class="fa-solid fa-copy"></i>
+                        </button>
+                      </div>
+                    </div>
+                  </mat-card-content>
+                  <mat-card-actions><button mat-icon-button (click)="closeObjectDetails()" title="Close"><i class="fa-solid fa-xmark"></i></button></mat-card-actions>
+                </mat-card>
+              }
+            </mat-card>
+          </div>
+        </mat-tab>
+        <!-- KEYS TAB -->
+        <mat-tab label="Keys">
+          <div class="tab-panel">
+            <mat-card class="card mb-0">
+              <div class="card-head">
+                <div class="card-head-info">
+                  <mat-icon>vpn_key</mat-icon>
+                  <div><h2>Access keys</h2><p>Create and manage S3 API credentials</p></div>
+                </div>
+                <div class="card-head-actions">
+                  <mat-form-field appearance="outline">
+                    <mat-label>Label</mat-label>
+                    <input matInput [value]="label()" #labelIn (input)="label.set(labelIn.value)" />
+                  </mat-form-field>
+                  <button mat-mini-fab color="primary" (click)="handleCreateKey()" title="Create key" aria-label="Create key">
+                    <i class="fa-solid fa-plus"></i>
+                  </button>
+                </div>
+              </div>
+              @if (keys().length === 0) {
+                <div class="empty-state">
+                  <mat-icon>vpn_key</mat-icon>
+                  <div class="title">No access keys</div>
+                  <div class="desc">Create a key to use S3 clients</div>
+                </div>
+              }
+              @if (keys().length > 0) {
+                <div class="data-table key-table">
+                  <div class="table-head cols-key"><span>Label</span><span>Access Key</span><span>Status</span><span>Actions</span></div>
+                  @for (key of keys(); track trackAccessKey($index, key)) {
+                    <div class="table-row cols-key">
+                      <div class="cell cell-stack">
+                        <strong>{{ key.label }}</strong>
+                        <span class="sub">Created {{ key.createdAt | date:'medium' }}</span>
+                      </div>
+                      <div class="cell text-mono">{{ key.accessKeyId }}</div>
+                      <div class="cell"><span class="pill" [ngClass]="key.status">{{ key.status }}</span></div>
+                      <div class="cell cell-actions">
+                        @if (key.status === 'active') {
+                          <button mat-icon-button (click)="handleDisable(key)" title="Disable" aria-label="Disable">
+                            <i class="fa-solid fa-ban"></i>
+                          </button>
+                        }
+                        <button mat-icon-button color="warn" (click)="handleDelete(key)" title="Delete" aria-label="Delete">
+                          <i class="fa-solid fa-trash"></i>
+                        </button>
+                      </div>
+                    </div>
+                  }
+                </div>
+              }
+            </mat-card>
+          </div>
+        </mat-tab>
+        <!-- ADMIN TAB -->
+        @if (isAdmin()) {
+          <mat-tab label="Admin">
+            <div class="tab-panel">
+              <!-- Join Token Banner -->
+              @if (joinToken()) {
+                <mat-card class="card card-success">
+                  <mat-card-title>Replica join token</mat-card-title>
+                  <mat-card-subtitle>Expires {{ joinToken()?.expiresAt | date:'medium' }}</mat-card-subtitle>
+                  <mat-card-content><div class="token-box">{{ joinToken()?.token }}</div></mat-card-content>
+                  <mat-card-actions><button mat-raised-button color="primary" (click)="dismissJoinToken()">Dismiss</button></mat-card-actions>
+                </mat-card>
+              }
+              <!-- Storage Usage Chart -->
+              @if (bucketStatsForChart().length > 0) {
+                <mat-card class="card">
+                  <div class="card-head">
+                    <div class="card-head-info">
+                      <mat-icon>pie_chart</mat-icon>
+                      <div><h2>Storage usage</h2><p>Total: {{ formatBytes(totalStorageUsed()) }}</p></div>
+                    </div>
+                    <div class="card-head-actions">
+                      <button mat-icon-button (click)="calculateBucketStats()" [disabled]="bucketStatsLoading()" title="Refresh">
+                        <i class="fa-solid" [class.fa-rotate]="!bucketStatsLoading()" [class.fa-spinner]="bucketStatsLoading()" [class.fa-spin]="bucketStatsLoading()"></i>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="storage-chart">
+                    <svg viewBox="0 0 100 100" class="pie-chart">
+                      <circle cx="50" cy="50" r="45" fill="var(--c-border)" />
+                      @for (stat of bucketStatsForChart(); track stat; let i = $index) {
+                        <path
+                          [attr.d]="getPieChartPath(i, totalStorageUsed(), bucketStatsForChart())"
+                          [attr.fill]="getChartColor(i)" />
+                      }
+                    </svg>
+                    <div class="chart-legend">
+                      @for (stat of bucketStatsForChart(); track stat; let i = $index) {
+                        <div class="legend-item">
+                          <span class="legend-color" [style.background]="getChartColor(i)"></span>
+                          <span class="legend-name">{{ stat.name }}</span>
+                          <span class="legend-value">{{ formatBytes(stat.sizeBytes) }}</span>
+                        </div>
+                      }
+                    </div>
+                  </div>
+                </mat-card>
+              }
+              <div class="admin-grid">
+                <!-- Users Card -->
+                <mat-card class="card admin-card">
+                  <div class="card-head">
+                    <div class="card-head-info">
+                      <mat-icon>people</mat-icon>
+                      <div><h2>Users</h2></div>
+                    </div>
+                  </div>
+                  <form class="admin-form" (submit)="handleCreateUser(); $event.preventDefault()">
+                    <mat-form-field appearance="outline"><mat-label>Username</mat-label><input matInput [value]="newUsername()" #newUserIn (input)="newUsername.set(newUserIn.value)" required /></mat-form-field>
+                    <mat-form-field appearance="outline"><mat-label>Display name</mat-label><input matInput [value]="newDisplay()" #newDispIn (input)="newDisplay.set(newDispIn.value)" /></mat-form-field>
+                    <mat-form-field appearance="outline"><mat-label>Temporary password</mat-label><input matInput type="password" [value]="newPassword()" #newPassIn (input)="newPassword.set(newPassIn.value)" required /></mat-form-field>
+                    <mat-slide-toggle color="primary" [checked]="newUserTempPassword()" (change)="newUserTempPassword.set($event.checked)">
+                      Require password change
+                    </mat-slide-toggle>
+                    <button mat-raised-button color="primary" type="submit">Create user</button>
+                  </form>
+                  @if (adminUsers().length === 0) {
+                    <div class="empty-state sm"><mat-icon>people_outline</mat-icon><div class="title">No users</div></div>
+                  }
+                  @if (adminUsers().length > 0) {
+                    <mat-list>
+                      @for (u of adminUsers(); track trackUser($index, u)) {
+                        <mat-list-item>
+                          <div class="list-row">
+                            <div class="list-row-info"><strong>{{ u.username }}</strong><span class="sub">{{ displayNameSummary(u) }}</span></div>
+                            <div class="list-row-actions">
+                              <span class="pill" [ngClass]="u.status">{{ u.status }}</span>
+                              <button mat-icon-button (click)="handleToggleUser(u)" title="Toggle status" aria-label="Toggle">
+                                <i class="fa-solid fa-toggle-on"></i>
+                              </button>
+                              <button mat-icon-button (click)="handleResetPassword(u)" title="Reset password" aria-label="Reset">
+                                <i class="fa-solid fa-key"></i>
+                              </button>
+                            </div>
+                          </div>
+                        </mat-list-item>
+                      }
+                    </mat-list>
+                  }
+                </mat-card>
+                <!-- Cluster Card -->
+                <mat-card class="card admin-card">
+                  <div class="card-head">
+                    <div class="card-head-info">
+                      <mat-icon>dns</mat-icon>
+                      <div><h2>Cluster</h2><p>Connected nodes</p></div>
+                    </div>
+                  </div>
+                  <button mat-raised-button color="primary" (click)="handleJoinToken()">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Generate join token
+                  </button>
+                  @if (nodes().length === 0) {
+                    <div class="empty-state sm"><mat-icon>dns</mat-icon><div class="title">No nodes</div></div>
+                  }
+                  @if (nodes().length > 0) {
+                    <mat-list>
+                      @for (n of nodes(); track trackNode($index, n)) {
+                        <mat-list-item>
+                          <div class="list-row">
+                            <div class="list-row-info"><strong>{{ n.role }}</strong><span class="sub">{{ n.addressInternal }}</span></div>
+                            <span class="pill" [ngClass]="n.status">{{ n.status }}</span>
+                          </div>
+                        </mat-list-item>
+                      }
+                    </mat-list>
+                  }
+                </mat-card>
+              </div>
+              <app-storage-admin [app]="appVm"></app-storage-admin>
+              <!-- Audit Log -->
+              <mat-card class="card" style="margin-top:20px">
+                <div class="card-head">
+                  <div class="card-head-info">
+                    <mat-icon>history</mat-icon>
+                    <div><h2>Audit log</h2><p>Recent actions</p></div>
+                  </div>
+                  <div class="card-head-actions">
+                    <button mat-icon-button (click)="refreshAudit()" [disabled]="auditLoading()" title="Refresh"><i class="fa-solid" [class.fa-rotate]="!auditLoading()" [class.fa-spinner]="auditLoading()" [class.fa-spin]="auditLoading()"></i></button>
+                  </div>
+                </div>
+                @if (recentAudit().length === 0 && !auditLoading()) {
+                  <div class="empty-state sm"><mat-icon>history</mat-icon><div class="title">No entries</div></div>
+                }
+                @if (recentAudit().length > 0) {
+                  <mat-list>
+                    @for (a of recentAudit(); track trackAudit($index, a)) {
+                      <mat-list-item>
+                        <div class="list-row">
+                          <div class="list-row-info"><strong>{{ a.action }}</strong><span class="sub">{{ a.ts | date:'medium' }}</span></div>
+                          <span class="pill" [ngClass]="a.outcome">{{ a.outcome }}</span>
+                        </div>
+                      </mat-list-item>
+                    }
+                  </mat-list>
+                }
+                @if (recentAudit().length > 0 || auditPage() > 0) {
+                  <div class="pagination">
+                    <button mat-stroked-button (click)="auditPrevPage()" [disabled]="auditPage() === 0 || auditLoading()">
+                      <i class="fa-solid fa-chevron-left"></i> Previous
+                    </button>
+                    <span class="page-info">Page {{ auditPage() + 1 }}</span>
+                    <button mat-stroked-button (click)="auditNextPage()" [disabled]="!auditHasMore() || auditLoading()">
+                      Next <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                  </div>
+                }
+              </mat-card>
+            </div>
+          </mat-tab>
+        }
+      </mat-tab-group>
+    </div>
+    <!-- Global Error -->
+    @if (error()) {
+      <div class="container"><div class="error error-msg">{{ error() }}</div></div>
+    }
+  </div>
+}

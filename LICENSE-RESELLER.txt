@@ -1,0 +1,125 @@
+SPDX-License-Identifier: LicenseRef-Reseller-1.1
+
+RESELLER LICENSE & ROYALTY AGREEMENT v1.1
+Service Provider / Managed Service Rights
+Per-Customer Monthly Royalty + USD $10,000 Signing Fee
+
+Copyright © the Licensor and contributors.
+All rights reserved.
+
+BY HOSTING, DISTRIBUTING, OR MAKING THE SOFTWARE AVAILABLE TO END CUSTOMERS, YOU AGREE TO THIS AGREEMENT.
+IF YOU DO NOT AGREE, DO NOT USE OR MAKE AVAILABLE THE SOFTWARE.
+
+1) DEFINITIONS
+
+1.1 “Affiliate” means any entity that directly or indirectly Controls, is Controlled by, or is under common Control with another entity.
+“Control” means (a) ownership, directly or indirectly, of more than fifty percent (50%) of the voting securities or other ownership interest of an entity; or
+(b) the power to direct the management or policies of an entity, whether through ownership, contract, or otherwise.
+
+1.2 “Active End Customer” means an End Customer that, at any time during a calendar month:
+(a) is issued credentials, API keys, tokens, signed URLs, endpoints, or other access to any interface of the Software (including any S3-Compatible Interface), or
+(b) receives hosted or managed use of the Software on its behalf (including storage, serving, or managing data) as part of Reseller’s offering.
+
+1.3 “End Customer” means any person or entity other than Reseller and its Affiliates that receives access to the Software or a service powered by the Software from Reseller.
+
+1.4 “Order Form” means a written document (including an invoice, quote accepted in writing, order confirmation, or other written instrument) issued by the Licensor that grants Reseller rights and states the signing fee, the per-Active-End-Customer royalty rate, and any other commercial terms.
+
+1.5 “S3-Compatible Interface” means any API, endpoint, or protocol implementation compatible with, substantially similar to, or intended to be used like the Amazon S3 API.
+
+1.6 “Software” means the software, binaries, source code (if provided), documentation, and other materials made available by the Licensor under this Agreement.
+
+1.7 “Reseller” or “You” means the legal entity identified in the Order Form.
+
+2) GRANT OF RESELLER RIGHTS (ONLY WITH ORDER FORM)
+
+2.1 Conditional grant. Reseller rights exist only if an Order Form has been issued by the Licensor and all fees in that Order Form have been paid.
+
+2.2 Grant. Subject to compliance with this Agreement and the applicable Order Form, the Licensor grants You a worldwide, non-exclusive, non-transferable, non-sublicensable license to:
+(a) host and operate the Software to provide services to End Customers;
+(b) provide End Customers with access to the Software’s functionality, including direct access to an S3-Compatible Interface, as part of Your offering; and
+(c) Distribute the Software in object-code form to End Customers only as necessary for customer-managed deployments under Your offering, provided End Customers are bound by terms consistent with Section 6.
+
+2.3 No ownership. The Software is licensed, not sold. All rights not expressly granted are reserved.
+
+3) FEES (STRICT)
+
+3.1 Signing fee. You must pay a one-time, non-refundable signing fee of USD $10,000 as stated in the Order Form. No reseller rights are granted until this fee is paid.
+
+3.2 Monthly royalties. You must pay monthly royalties based on the number of Active End Customers, at the per-customer rate stated in the Order Form.
+
+3.3 Reporting deadline. Within ten (10) days after the end of each calendar month, You must deliver the monthly report required by Section 4.1.
+
+3.4 Payment deadline. Royalties are due within fifteen (15) days after the end of each calendar month.
+
+3.5 Late payments. Overdue amounts accrue interest at 1.5% per month (or the maximum rate allowed by law, if lower) from the due date until paid.
+
+4) REPORTING AND AUDIT (TIGHT)
+
+4.1 Monthly report. Your report must state:
+(a) the total number of Active End Customers for the month; and
+(b) a stable, non-sensitive identifier for each Active End Customer (e.g., an internal customer ID) sufficient to prevent double-counting.
+
+4.2 Records. You must maintain accurate records reasonably necessary to verify Active End Customer counts for at least three (3) years.
+
+4.3 Audit. Not more than once per year, the Licensor may audit records related to Active End Customer counts upon thirty (30) days’ written notice, during normal business hours, in a manner designed to minimize disruption.
+
+4.4 Underpayment. If an audit reveals underpayment greater than five percent (5%) for any audited period, You must pay the deficiency promptly and reimburse the Licensor’s reasonable audit costs.
+
+4.5 Failure to report. If You fail to deliver a report on time, the Licensor may, at its option, (a) treat the failure as a material breach, and/or (b) invoice an estimate based on the highest Active End Customer count previously reported (or reasonably inferred), subject to later true-up after You deliver complete records.
+
+5) RESTRICTIONS
+
+5.1 No sub-resellers. You must not appoint sub-resellers or allow any third party to resell the Software or reseller rights without the Licensor’s prior written consent.
+
+5.2 No circumvention. You must not bypass, disable, interfere with, or attempt to defeat license checks, reporting mechanisms, or technical protections included in the Software.
+
+5.3 No trademark rights. This Agreement does not grant rights to use the Licensor’s trademarks except as necessary to preserve attribution notices included in the Software. Marketing use requires separate written permission unless the Order Form states otherwise.
+
+6) END CUSTOMER TERMS (MANDATORY)
+
+6.1 You are responsible for ensuring each End Customer is bound by written terms that:
+(a) prohibit reverse engineering to the maximum extent permitted by law;
+(b) prohibit unlawful use and misuse;
+(c) disclaim warranties and limit liability in a manner at least as protective of the Licensor as Sections 9 and 10 of this Agreement; and
+(d) do not create any direct support or warranty obligations for the Licensor.
+
+6.2 You are solely responsible for End Customer support unless the Licensor separately agrees in writing.
+
+7) TERM AND TERMINATION
+
+7.1 Term. This Agreement continues until terminated.
+
+7.2 Termination for convenience. Either party may terminate for any reason upon sixty (60) days’ written notice, unless the Order Form states otherwise.
+
+7.3 Immediate termination for nonpayment or hard breaches. The Licensor may terminate immediately upon written notice if:
+(a) You fail to pay any fee when due and do not cure within ten (10) days after notice; or
+(b) You materially breach Sections 2, 3, 4, or 5 and do not cure within thirty (30) days after notice; or
+(c) You bypass or disable license checks or technical protections.
+
+7.4 Effect of termination. Upon termination:
+(a) all rights granted to You immediately cease;
+(b) You must stop onboarding new End Customers immediately;
+(c) You must pay all accrued and unpaid fees; and
+(d) upon request, You must certify deletion or return of copies of the Software not required for permitted wind-down.
+
+7.5 Wind-down (only for convenience termination). If terminated for convenience under Section 7.2, You may continue serving existing End Customers for up to ninety (90) days solely to transition them off the Software, provided You remain current on fees and continue reporting.
+
+8) OWNERSHIP
+
+The Software is licensed, not sold. The Licensor retains all right, title, and interest, including all intellectual property rights.
+
+9) DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED “AS IS” AND “AS AVAILABLE,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+10) LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT WILL THE LICENSOR OR CONTRIBUTORS BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA, OR BUSINESS INTERRUPTION. THE LICENSOR’S TOTAL LIABILITY UNDER THIS AGREEMENT WILL NOT EXCEED USD $10,000.
+
+11) EQUITABLE RELIEF
+
+You acknowledge that breach of Sections 2, 3, 4, or 5 may cause irreparable harm and that the Licensor may seek injunctive or equitable relief in addition to any other remedies.
+
+12) GOVERNING LAW
+
+This Agreement is governed by the laws of the jurisdiction where the Licensor is organized, excluding conflict-of-law rules.

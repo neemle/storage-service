@@ -1,0 +1,7 @@
+[advisories]
+# Temporary exception:
+# - RUSTSEC-2023-0071 is currently pulled through sqlx macro metadata via sqlx-mysql -> rsa.
+# - The project targets PostgreSQL only and does not use MySQL at runtime.
+# - No fixed upstream version is currently available for this advisory path.
+# Revisit when sqlx releases a stable version that removes this path.
+ignore = ["RUSTSEC-2023-0071"]

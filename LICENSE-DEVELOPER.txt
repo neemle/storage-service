@@ -1,0 +1,110 @@
+SPDX-License-Identifier: LicenseRef-Developer-Embedding-1.1
+
+DEVELOPER LICENSE AGREEMENT v1.1
+Embedding / Redistribution as Part of Another Software (Annual Fee)
+NO SERVICE PROVIDER RIGHTS
+
+Copyright © the Licensor and contributors.
+All rights reserved.
+
+BY INSTALLING, COPYING, ACCESSING, DISTRIBUTING, OR USING THE SOFTWARE, YOU AGREE TO THIS AGREEMENT.
+IF YOU DO NOT AGREE, DO NOT USE THE SOFTWARE.
+
+1) DEFINITIONS
+
+1.1 “Affiliate” means any entity that directly or indirectly Controls, is Controlled by, or is under common Control with another entity.
+“Control” means (a) ownership, directly or indirectly, of more than fifty percent (50%) of the voting securities or other ownership interest of an entity; or
+(b) the power to direct the management or policies of an entity, whether through ownership, contract, or otherwise.
+
+1.2 “Competing Storage Product” means any product or offering whose primary purpose is to provide general-purpose object storage or S3-compatible object storage, including products marketed primarily as storage, buckets, object storage, S3 storage, or S3-compatible storage.
+
+1.3 “Distribution” means making the Software available to any third party, including by shipping binaries, installers, container images, appliances, virtual machine images, downloadable artifacts, or otherwise transferring a copy to another legal entity.
+
+1.4 “End Customer” means any person or entity other than You and Your Affiliates that receives the Licensed Product.
+
+1.5 “Licensed Product” means a software product, appliance, or solution developed and distributed by You that:
+(a) provides substantial, material functionality independent of the Software; and
+(b) incorporates the Software solely as a component of the Licensed Product; and
+(c) is not a rebranding, repackaging, or minimally modified version of the Software; and
+(d) is not a Competing Storage Product.
+
+1.6 “Order Form” means a written document (including an invoice, quote accepted in writing, order confirmation, or other written instrument) issued by the Licensor that grants You a Developer license and states the applicable annual fee and Term.
+
+1.7 “Service Provider Use” means providing the Software (or any of its functionality) to any third party as a hosted service, managed service, or similar offering, including giving third parties credentials, API keys, tokens, endpoints, or other access that enables them to call or use the Software’s APIs or interfaces directly.
+
+1.8 “Software” means the software, binaries, source code (if provided), and documentation made available by the Licensor under this Developer License.
+
+1.9 “Term” means the 12-month period stated in the applicable Order Form.
+
+1.10 “You” or “Licensee” means the legal entity identified in the Order Form.
+
+2) LICENSE GRANT (EMBEDDING / REDISTRIBUTION)
+
+2.1 Grant. Subject to payment of fees and compliance with this Agreement and the applicable Order Form, the Licensor grants You a worldwide, non-exclusive, non-transferable, non-sublicensable license during the Term to:
+(a) install and use the Software internally for development, testing, and QA of the Licensed Product;
+(b) reproduce the Software as reasonably necessary for internal build pipelines, CI/CD, backups, and disaster recovery; and
+(c) Distribute the Software to End Customers solely as embedded in, bundled with, or otherwise made part of the Licensed Product, in object-code form only, and only to the extent necessary for operation of the Licensed Product.
+
+2.2 Affiliates. Your Affiliates may exercise the rights in Section 2.1 solely on Your behalf. You are responsible for their compliance.
+
+3) HARD RESTRICTIONS (NO LOOPS)
+
+3.1 No Standalone Distribution. You must not Distribute the Software on a standalone basis or as a product in itself. The Software may be Distributed only as part of a Licensed Product.
+
+3.2 No Service Provider Use. This Agreement does not grant any right to use the Software for Service Provider Use. If You host the Software for third parties or provide third parties direct access to the Software’s interfaces, You must obtain a Reseller license.
+
+3.3 No sublicensing beyond pass-through. You may not sublicense the Software, except that You may grant End Customers a limited right to run the embedded Software solely as part of, and solely for operation of, the Licensed Product.
+
+3.4 No extraction / separation. You must design the Licensed Product’s packaging and End Customer terms to prohibit and reasonably prevent End Customers from extracting, separating, or using the Software on a standalone basis.
+
+3.5 No Circumvention. You must not bypass, disable, interfere with, or attempt to defeat license checks, usage restrictions, or technical protections included in the Software.
+
+3.6 No Reverse Engineering of Binaries. If the Software is provided in binary form, You must not reverse engineer, decompile, or disassemble it, except to the extent such restriction is prohibited by applicable law.
+
+3.7 No Trademark Rights. This Agreement does not grant rights to use the Licensor’s trademarks except as necessary to preserve attribution notices included in the Software.
+
+4) END CUSTOMER TERMS (MANDATORY PASS-THROUGH)
+
+4.1 You must ensure each End Customer is bound by written terms that:
+(a) restrict the End Customer from extracting, separating, or using the Software on a standalone basis;
+(b) prohibit reverse engineering of the Software to the maximum extent permitted by law;
+(c) disclaim warranties and limit liability in a manner at least as protective of the Licensor as Sections 9 and 10 of this Agreement; and
+(d) prohibit unlawful use and misuse.
+
+4.2 You are solely responsible for End Customer support unless the Licensor separately agrees in writing.
+
+5) FEES, TERM, AND EXPIRATION
+
+5.1 Fees and Term are stated in the Order Form. Rights under this Agreement exist only during an active, paid Term.
+
+5.2 If You do not renew, You must stop Distributing new copies of the Software and must stop shipping new versions of the Licensed Product that include the Software.
+
+5.3 End Customer continuation (only if no breach). If this Agreement expires (not terminated for Your breach) and You were in compliance through the end of the Term, End Customers may continue using copies of the embedded Software that were Distributed during the active Term solely as part of and for operation of the Licensed Product, provided they do not extract or use the Software standalone.
+
+6) TERMINATION
+
+6.1 Termination for breach. Either party may terminate for material breach not cured within thirty (30) days after written notice, except that breaches of Sections 3.1, 3.2, 3.4, or 3.5 are material and may be terminated immediately upon notice.
+
+6.2 Effect. Upon termination or expiration:
+(a) all rights granted to You to use and Distribute the Software cease, except as explicitly allowed by Section 5.3; and
+(b) You must delete or destroy all copies of the Software in Your possession or control not required for supporting previously Distributed Licensed Product installations allowed under Section 5.3.
+
+7) OWNERSHIP
+
+The Software is licensed, not sold. The Licensor retains all rights not expressly granted.
+
+8) EQUITABLE RELIEF
+
+You acknowledge that breach of Sections 3.1, 3.2, 3.4, or 3.5 may cause irreparable harm and that the Licensor may seek injunctive or equitable relief in addition to any other remedies.
+
+9) DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED “AS IS” AND “AS AVAILABLE,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+10) LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT WILL THE LICENSOR OR CONTRIBUTORS BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA, OR BUSINESS INTERRUPTION. THE LICENSOR’S TOTAL LIABILITY UNDER THIS AGREEMENT WILL NOT EXCEED THE ANNUAL FEES PAID BY YOU UNDER THE APPLICABLE ORDER FORM DURING THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO LIABILITY.
+
+11) GOVERNING LAW
+
+This Agreement is governed by the laws of the jurisdiction where the Licensor is organized, excluding conflict-of-law rules.

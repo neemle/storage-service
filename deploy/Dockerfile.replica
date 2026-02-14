@@ -1,0 +1,34 @@
+FROM rust:1.93-bullseye AS builder
+ARG TARGETARCH
+ARG NSS_APP_VERSION=0.1.0
+WORKDIR /app
+ENV NSS_APP_VERSION=${NSS_APP_VERSION}
+ENV CC_x86_64_unknown_linux_musl=musl-gcc
+ENV CC_aarch64_unknown_linux_musl=musl-gcc
+RUN apt-get update && apt-get install -y --no-install-recommends musl-tools pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+RUN case "$TARGETARCH" in \
+      amd64) echo "x86_64-unknown-linux-musl" > /tmp/rust-target ;; \
+      arm64) echo "aarch64-unknown-linux-musl" > /tmp/rust-target ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac
+RUN rustup target add "$(cat /tmp/rust-target)"
+COPY Cargo.toml Cargo.lock ./
+COPY internal internal
+COPY cmd cmd
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target \
+    TARGET="$(cat /tmp/rust-target)" && \
+    cargo build --release --target "$TARGET" -p nss && \
+    cp "/app/target/$TARGET/release/nss" /app/nss
+
+FROM gcr.io/distroless/static-debian12
+ARG NSS_APP_VERSION=0.1.0
+ENV CARGO_PKG_VERSION=${NSS_APP_VERSION}
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+WORKDIR /app
+COPY --from=builder /app/nss /app/nss
+COPY --from=builder /app/internal/meta/migrations /app/migrations
+EXPOSE 9010 9100
+ENTRYPOINT ["/app/nss"]

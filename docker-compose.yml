@@ -1,0 +1,259 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_BASE}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "15432:5432"
+    volumes:
+      - ./.local-data/pg:/var/lib/postgresql
+
+  master:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.master
+    env_file:
+      - .env
+    environment:
+      NSS_MODE: master
+      NSS_POSTGRES_DSN: postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_BASE}?sslmode=disable
+      NSS_DATA_DIRS: /data
+      NSS_INTERNAL_ADVERTISE: http://master:9003
+      NSS_MIGRATION_AUTO_REPAIR: ${NSS_MIGRATION_AUTO_REPAIR:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+      - "9003:9003"
+      - "9100:9100"
+    volumes:
+      - ./.local-data/master:/data
+
+  join-token-seed:
+    image: postgres:18-alpine
+    env_file:
+      - .env
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      DB_BASE: ${DB_BASE}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      master:
+        condition: service_started
+    volumes:
+      - ./deploy/observability/seed_join_tokens.sh:/scripts/seed_join_tokens.sh:ro
+    command:
+      - sh
+      - /scripts/seed_join_tokens.sh
+
+  replica1:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.replica
+    env_file:
+      - .env
+    environment:
+      NSS_MODE: replica
+      NSS_POSTGRES_DSN: postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_BASE}?sslmode=disable
+      NSS_DATA_DIRS: /data
+      NSS_MASTER_URL: http://master:9003
+      NSS_JOIN_TOKEN: ${NSS_REPLICA1_JOIN_TOKEN}
+      NSS_REPLICA_SUB_MODE: delivery
+      NSS_REPLICA_ADVERTISE: http://replica1:9010
+    depends_on:
+      join-token-seed:
+        condition: service_completed_successfully
+      master:
+        condition: service_started
+    ports:
+      - "9004:9000"
+      - "9010:9010"
+      - "9101:9100"
+    volumes:
+      - ./.local-data/replicas/replica-1:/data
+
+  replica2:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.replica
+    env_file:
+      - .env
+    environment:
+      NSS_MODE: replica
+      NSS_POSTGRES_DSN: postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_BASE}?sslmode=disable
+      NSS_DATA_DIRS: /data
+      NSS_MASTER_URL: http://master:9003
+      NSS_JOIN_TOKEN: ${NSS_REPLICA2_JOIN_TOKEN}
+      NSS_REPLICA_SUB_MODE: delivery
+      NSS_REPLICA_ADVERTISE: http://replica2:9010
+    depends_on:
+      join-token-seed:
+        condition: service_completed_successfully
+      master:
+        condition: service_started
+    ports:
+      - "9005:9000"
+      - "9011:9010"
+      - "9102:9100"
+    volumes:
+      - ./.local-data/replicas/replica-2:/data
+
+  observability-bootstrap:
+    image: python:3.12-alpine
+    env_file:
+      - .env
+    environment:
+      NSS_OBS_OUTPUT_DIR: /obs
+      PYTHONUNBUFFERED: "1"
+      NSS_OBS_MASTER_URL: http://master:9001
+      NSS_OBS_S3_URL: http://master:9000
+    depends_on:
+      master:
+        condition: service_started
+    volumes:
+      - ./.local-data/observability:/obs
+      - ./deploy/observability/bootstrap_obs.py:/opt/nss/deploy/observability/bootstrap_obs.py:ro
+    command:
+      - sh
+      - -ec
+      - |
+        pip install --no-cache-dir boto3==1.42.47
+        python /opt/nss/deploy/observability/bootstrap_obs.py
+
+  loki:
+    image: grafana/loki:3.2.1
+    depends_on:
+      observability-bootstrap:
+        condition: service_completed_successfully
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./.local-data/observability:/obs
+      - ./.local-data/observability/loki:/loki
+    command:
+      - -config.file=/obs/loki-config.yml
+
+  promtail:
+    image: grafana/promtail:3.2.1
+    depends_on:
+      loki:
+        condition: service_started
+    ports:
+      - "9080:9080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./deploy/observability/promtail.yml:/etc/promtail/config.yml:ro
+    command:
+      - -config.file=/etc/promtail/config.yml
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    depends_on:
+      master:
+        condition: service_started
+      replica1:
+        condition: service_started
+      replica2:
+        condition: service_started
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./.local-data/observability/prometheus:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=12h
+      - --storage.tsdb.min-block-duration=2m
+      - --storage.tsdb.max-block-duration=2m
+      - --web.enable-lifecycle
+
+  thanos-sidecar:
+    image: quay.io/thanos/thanos:v0.37.2
+    depends_on:
+      observability-bootstrap:
+        condition: service_completed_successfully
+      prometheus:
+        condition: service_started
+    ports:
+      - "10902:10902"
+    volumes:
+      - ./.local-data/observability:/obs
+      - ./.local-data/observability/prometheus:/prometheus
+    command:
+      - sidecar
+      - --http-address=0.0.0.0:10902
+      - --grpc-address=0.0.0.0:10901
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus:9090
+      - --objstore.config-file=/obs/thanos-objstore.yml
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./.local-data/observability/grafana:/var/lib/grafana
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+  demo-traffic:
+    image: python:3.12-alpine
+    env_file:
+      - .env
+    environment:
+      NSS_OBS_OUTPUT_DIR: /obs
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      observability-bootstrap:
+        condition: service_completed_successfully
+      replica1:
+        condition: service_started
+      replica2:
+        condition: service_started
+    volumes:
+      - ./.local-data/observability:/obs
+      - ./deploy/observability/demo_load.py:/opt/nss/deploy/observability/demo_load.py:ro
+    command:
+      - sh
+      - -ec
+      - |
+        pip install --no-cache-dir boto3==1.42.47
+        python /opt/nss/deploy/observability/demo_load.py
+
+  redis:
+    image: redis:7-alpine
+    profiles:
+      - redis
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    profiles:
+      - rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"

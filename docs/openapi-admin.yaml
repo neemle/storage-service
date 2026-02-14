@@ -1,0 +1,19 @@
+openapi: 3.0.3
+info:
+  title: Neemle Storage Service Admin API
+  version: 0.1.0
+paths:
+  /admin/v1/login:
+    post:
+      summary: Admin login
+  /admin/v1/users:
+    get:
+      summary: List users
+    post:
+      summary: Create user
+  /admin/v1/cluster/nodes:
+    get:
+      summary: List nodes
+  /admin/v1/cluster/join-tokens:
+    post:
+      summary: Create join token

@@ -1,0 +1,304 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "*"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check line and function limits
+        run: python3 scripts/quality-check.py
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93"
+          components: rustfmt, clippy
+
+      - name: Enforce Rust format
+        run: cargo fmt --all -- --check
+
+      - name: Enforce strict Rust lints (production targets)
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Install cargo-audit
+        run: |
+          if ! cargo audit --version >/dev/null 2>&1; then
+            cargo install cargo-audit --locked
+          fi
+
+      - name: Run Rust security audit
+        run: ./scripts/security-audit.sh
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: security-audit
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93"
+
+      - name: Build Rust workspace
+        run: cargo build --workspace --locked
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/console-ui/package-lock.json
+
+      - name: Build console UI
+        run: |
+          cd web/console-ui
+          npm ci
+          npm run build
+
+  distroless-verify:
+    name: Distroless Verification
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify master distroless static image
+        run: ./scripts/verify-distroless.sh nss-ci-master ${{ github.sha }} master
+
+      - name: Verify replica distroless static image
+        run: ./scripts/verify-distroless.sh nss-ci-replica ${{ github.sha }} replica
+
+  stage-1-unit:
+    name: Stage 1 - Unit
+    runs-on: ubuntu-latest
+    needs: distroless-verify
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run backend unit tests
+        run: ./scripts/unit-tests.sh
+
+      - name: Run UI unit tests (dockerized)
+        run: ./scripts/ui-unit-tests.sh
+
+      - name: Upload UI unit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-unit-artifacts
+          if-no-files-found: ignore
+          path: test-results/ui-unit
+
+  stage-2-integration:
+    name: Stage 2 - Integration
+    runs-on: ubuntu-latest
+    needs: stage-1-unit
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run backend integration tests
+        run: ./scripts/integration-tests.sh
+
+      - name: Run UI integration tests (dockerized)
+        run: ./scripts/ui-integration-tests.sh
+
+      - name: Upload UI integration artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-integration-artifacts
+          if-no-files-found: ignore
+          path: test-results/ui-integration
+
+  stage-2b-cluster:
+    name: Stage 2B - Cluster
+    runs-on: ubuntu-latest
+    needs: stage-2-integration
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run cluster tests
+        run: ./scripts/cluster-tests.sh
+
+  stage-2c-memcheck:
+    name: Stage 2C - Memcheck
+    runs-on: ubuntu-latest
+    needs: stage-2b-cluster
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run memory leak checks
+        run: ./scripts/memory-leak-check.sh
+
+      - name: Upload memcheck artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memcheck-artifacts
+          if-no-files-found: ignore
+          path: test-results/memcheck
+
+  stage-3-curl:
+    name: Stage 3 - Curl Runtime/Dev
+    runs-on: ubuntu-latest
+    needs: stage-2c-memcheck
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run curl tests
+        run: ./scripts/curl-tests.sh
+      - name: Run integration curl journey tests
+        run: ./scripts/it.sh
+
+  stage-4-base-ui:
+    name: Stage 4 - Base UI
+    runs-on: ubuntu-latest
+    needs: stage-3-curl
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run base UI Playwright tests
+        env:
+          NSS_PLAYWRIGHT_PROJECTS: base
+        run: ./scripts/ui-tests.sh
+
+      - name: Upload base UI artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-base-artifacts
+          if-no-files-found: ignore
+          path: test-results/ui-base
+
+  stage-5-ui:
+    name: Stage 5 - UI
+    runs-on: ubuntu-latest
+    needs: stage-4-base-ui
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run full UI Playwright tests (base + ui)
+        env:
+          NSS_PLAYWRIGHT_PROJECTS: base ui
+        run: ./scripts/ui-tests.sh
+
+      - name: Upload UI artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-ui-artifacts
+          if-no-files-found: ignore
+          path: test-results/ui-tests
+
+  stage-6-runtime:
+    name: Stage 6 - Runtime Production API Image
+    runs-on: ubuntu-latest
+    needs: stage-5-ui
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run runtime curl tests
+        run: ./scripts/runtime-tests.sh
+
+  stage-7-production:
+    name: Stage 7 - Production Fullstack
+    runs-on: ubuntu-latest
+    needs: stage-6-runtime
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run production tests
+        run: ./scripts/production-tests.sh
+
+      - name: Upload production artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-production-artifacts
+          if-no-files-found: ignore
+          path: test-results/production
+
+  release:
+    name: Release Binaries
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    needs: stage-7-production
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Build cross-platform binaries
+        run: npm run build:dist -- all
+
+      - name: Package release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+
+          for platform_dir in dist/*; do
+            [ -d "$platform_dir" ] || continue
+            platform_name=$(basename "$platform_dir")
+
+            if [ -f "$platform_dir/nss.exe" ]; then
+              (
+                cd dist
+                zip -j "../release/neemle-storage-service-${platform_name}.zip" "${platform_name}/nss.exe"
+              )
+            elif [ -f "$platform_dir/nss" ]; then
+              tar -C dist -czf "release/neemle-storage-service-${platform_name}.tar.gz" "${platform_name}/nss"
+            fi
+          done
+
+          if [ -d dist/ui ]; then
+            tar -C dist -czf release/neemle-storage-service-ui.tar.gz ui
+          fi
+
+          sha256sum release/* > release/SHA256SUMS.txt
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

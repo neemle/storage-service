@@ -1,0 +1,120 @@
+SPDX-License-Identifier: LicenseRef-Commercial-1.1
+
+COMMERCIAL LICENSE AGREEMENT v1.1
+Internal Company Use + Email Support
+NO RESELL, NO DISTRIBUTION, NO SERVICE PROVIDER USE
+
+Copyright © the Licensor and contributors.
+All rights reserved.
+
+BY INSTALLING, COPYING, ACCESSING, OR USING THE SOFTWARE, YOU AGREE TO THIS AGREEMENT.
+IF YOU DO NOT AGREE, DO NOT USE THE SOFTWARE.
+
+1) DEFINITIONS
+
+1.1 “Affiliate” means any entity that directly or indirectly Controls, is Controlled by, or is under common Control with another entity.
+“Control” means (a) ownership, directly or indirectly, of more than fifty percent (50%) of the voting securities or other ownership interest of an entity; or
+(b) the power to direct the management or policies of an entity, whether through ownership, contract, or otherwise.
+
+1.2 “Authorized Users” means Your and Your Affiliates’ employees and individual contractors who:
+(a) are acting solely on behalf of You or Your Affiliates;
+(b) are bound by written confidentiality and security obligations at least as protective as those applicable to Your employees; and
+(c) access the Software only for internal business purposes.
+
+1.3 “Direct Access” means any ability of a Third Party to:
+(a) authenticate to, call, or use any Software API or interface (including any S3-Compatible Interface), whether through credentials, tokens, keys, shared secrets, VPN access, private networking, embedded credentials, signed URLs, presigned URLs, or any similar mechanism; or
+(b) use the Software as a general-purpose object storage system, including the ability to store, list, retrieve, delete, or manage objects/buckets in a manner functionally comparable to an object storage service.
+
+1.4 “Documentation” means the materials the Licensor provides with the Software.
+
+1.5 “Order Form” means a written document (including an invoice, quote accepted in writing, order confirmation, or other written instrument) issued by the Licensor that grants You a Commercial license and states the applicable fees and Term.
+
+1.6 “S3-Compatible Interface” means any API, endpoint, or protocol implementation compatible with, substantially similar to, or intended to be used like the Amazon S3 API.
+
+1.7 “Service Provider Use” means providing the Software (or any of its functionality) to any Third Party as a hosted service, managed service, or similar offering, including any scenario where a Third Party receives Direct Access.
+
+1.8 “Software” means the software, binaries, source code (if provided), and Documentation made available by the Licensor under this Commercial License.
+
+1.9 “Term” means the license term stated in the applicable Order Form.
+
+1.10 “Third Party” means any person or entity other than You, Your Affiliates, and Authorized Users.
+
+1.11 “You” or “Licensee” means the legal entity identified in the Order Form.
+
+2) LICENSE GRANT (INTERNAL USE ONLY)
+
+2.1 Grant. Subject to payment of fees and compliance with this Agreement and the applicable Order Form, the Licensor grants You a worldwide, non-exclusive, non-transferable, non-sublicensable license during the Term to:
+(a) install, run, and use the Software solely for Your and Your Affiliates’ internal business purposes;
+(b) allow Authorized Users to access the Software solely on Your behalf;
+(c) make a reasonable number of copies for backup and disaster recovery; and
+(d) modify the Software solely for internal use (if source code is provided), provided You do not distribute modifications to any Third Party.
+
+2.2 Affiliates included. Your Affiliates may exercise the rights in Section 2.1 for internal use. For purposes of this Agreement, “You” includes Your Affiliates solely for internal use, and You are responsible for Your Affiliates’ compliance.
+
+3) STRICT RESTRICTIONS
+
+3.1 No Distribution / No Resale. You must not sell, resell, sublicense, rent, lease, distribute, publish, transfer, or otherwise make the Software (or any derivative works) available to any Third Party.
+
+3.2 No Service Provider Use. You must not use the Software for Service Provider Use.
+
+3.3 No Third-Party Direct Access (including “S3 access resale”). You must not provide any Third Party any Direct Access to the Software, including to any S3-Compatible Interface powered by the Software. This prohibition applies whether access is provided directly, indirectly, via proxy, via gateway, through your application, via “temporary credentials,” via signed URLs, or via any other mechanism that results in Third Party Direct Access.
+
+3.4 Permitted Indirect Use (narrow). You may use the Software as an internal backend component of Your own application or service that is offered to Third Parties only if all of the following are true:
+(a) no Third Party receives Direct Access to the Software;
+(b) Third Parties authenticate only to Your application/service, and Your application/service enforces business logic and access control so that Third Parties cannot use it as a general-purpose object storage service;
+(c) You do not market, price, package, or represent any part of your offering as object storage, S3 storage, S3-compatible storage, “buckets,” or substantially similar storage-as-a-service functionality; and
+(d) the Software is not the primary value or primary function being sold to Third Parties.
+
+3.5 No Circumvention. You must not bypass, disable, interfere with, or attempt to defeat license checks, usage restrictions, telemetry controls (if any), or technical protections included in the Software.
+
+3.6 No Reverse Engineering of Binaries. If the Software is provided in binary form, You must not reverse engineer, decompile, or disassemble it, except to the extent such restriction is prohibited by applicable law.
+
+3.7 No Trademark Rights. This Agreement does not grant rights to use the Licensor’s trademarks except as necessary to preserve attribution notices included in the Software.
+
+4) SUPPORT (EMAIL, NO GUARANTEES)
+
+4.1 Email support. During the Term, the Licensor will provide email-based support on a best-effort basis. Support may include installation guidance, configuration assistance, and troubleshooting.
+
+4.2 No SLA. No guaranteed response times, uptime commitments, or service levels are provided unless explicitly stated in an Order Form.
+
+4.3 Third parties. The Licensor has no obligation to provide support to any Third Party.
+
+5) FEES AND TERM
+
+5.1 Fees and Term are stated in the Order Form. Rights under this Agreement exist only during an active, paid Term.
+
+5.2 Nonpayment. If fees are not paid when due, the Licensor may suspend or terminate the license grant immediately upon written notice.
+
+6) COMPLIANCE VERIFICATION
+
+6.1 Certification. Not more than once per calendar year, upon reasonable written notice, You will provide a signed written certification of compliance with Sections 3.2 and 3.3.
+
+6.2 Audit. If the Licensor has a reasonable good-faith basis to believe You are in breach of Sections 3.2 or 3.3, the Licensor may request additional information reasonably necessary to verify compliance. The Licensor will not request Your confidential customer data beyond what is strictly necessary for verification.
+
+7) OWNERSHIP
+
+The Software is licensed, not sold. The Licensor retains all rights not expressly granted.
+
+8) TERM AND TERMINATION
+
+8.1 Term. This Agreement applies during the Term stated in the Order Form.
+
+8.2 Termination for breach. Either party may terminate for material breach not cured within thirty (30) days after written notice, except that breaches of Sections 3.2, 3.3, or 3.5 are material and may be terminated immediately upon notice.
+
+8.3 Effect. Upon termination or expiration, You must cease using the Software and delete all copies in Your possession or control, except one archival copy solely for legal compliance.
+
+9) DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED “AS IS” AND “AS AVAILABLE,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+10) LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT WILL THE LICENSOR OR CONTRIBUTORS BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA, OR BUSINESS INTERRUPTION. THE LICENSOR’S TOTAL LIABILITY UNDER THIS AGREEMENT WILL NOT EXCEED THE FEES PAID BY YOU UNDER THE APPLICABLE ORDER FORM DURING THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO LIABILITY.
+
+11) EQUITABLE RELIEF
+
+You acknowledge that breach of Sections 3.2, 3.3, or 3.5 may cause irreparable harm and that the Licensor may seek injunctive or equitable relief in addition to any other remedies.
+
+12) GOVERNING LAW
+
+This Agreement is governed by the laws of the jurisdiction where the Licensor is organized, excluding conflict-of-law rules.

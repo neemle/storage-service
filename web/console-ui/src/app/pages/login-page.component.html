@@ -1,0 +1,49 @@
+<div class="page page-login">
+  <mat-card class="login-card">
+    <div class="login-header">
+      <div class="login-icon"><mat-icon>cloud_queue</mat-icon></div>
+      <mat-card-title>Neemle Storage Service Console</mat-card-title>
+      <mat-card-subtitle>Sign in to manage your storage</mat-card-subtitle>
+    </div>
+    @if (app.authMode() === 'internal') {
+      <form class="login-form" (submit)="app.handleLogin(); $event.preventDefault()">
+        <mat-form-field appearance="outline">
+          <mat-label>Username</mat-label>
+          <input
+            matInput
+            name="username"
+            [value]="app.loginUsername()"
+            #loginUser
+            (input)="app.loginUsername.set(loginUser.value)"
+            autocomplete="username"
+            />
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+          <mat-label>Password</mat-label>
+          <input
+            matInput
+            name="password"
+            type="password"
+            [value]="app.loginPassword()"
+            #loginPass
+            (input)="app.loginPassword.set(loginPass.value)"
+            autocomplete="current-password"
+            />
+        </mat-form-field>
+        <button mat-raised-button color="primary" type="submit" [disabled]="app.loading()">
+          {{ app.loading() ? 'Signing in...' : 'Sign in' }}
+        </button>
+      </form>
+    } @else {
+      <div class="login-form">
+        <button mat-raised-button color="primary" type="button" (click)="app.handleExternalLogin()">
+          Continue with external identity
+        </button>
+      </div>
+    }
+    @if (app.error()) {
+      <div class="error error-msg">{{ app.error() }}</div>
+    }
+    <div class="login-footer">S3-compatible object storage</div>
+  </mat-card>
+</div>

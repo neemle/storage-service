@@ -1,0 +1,19 @@
+openapi: 3.0.3
+info:
+  title: Neemle Storage Service Console API
+  version: 0.1.0
+paths:
+  /console/v1/login:
+    post:
+      summary: Console login
+  /console/v1/access-keys:
+    get:
+      summary: List access keys
+    post:
+      summary: Create access key
+  /console/v1/presign:
+    post:
+      summary: Generate presigned URL
+  /console/v1/buckets:
+    get:
+      summary: List buckets

@@ -1,0 +1,36 @@
+<mat-toolbar color="primary" class="header">
+  <div class="header-brand">
+    <mat-icon>cloud_queue</mat-icon>
+    <div class="header-title">Neemle Storage Service Console</div>
+  </div>
+  <span class="spacer"></span>
+  <div class="header-meta">
+    <span class="signed-in">Signed in as {{ app.user()?.username }}</span>
+    @if (app.isAdmin()) {
+      <span class="pill active">Admin</span>
+    }
+  </div>
+  <button mat-button class="sign-out-btn" (click)="app.handleLogout()">Sign out</button>
+  <div class="user-menu">
+    <button mat-button class="user-menu-btn" (click)="app.toggleUserMenu()">
+      <i class="fa-solid fa-user"></i>
+      <i class="fa-solid fa-chevron-down"></i>
+    </button>
+    @if (app.userMenuOpen()) {
+      <div class="menu-overlay" (click)="app.closeUserMenu()"></div>
+    }
+    @if (app.userMenuOpen()) {
+      <div class="user-menu-dropdown">
+        <button class="user-menu-item" (click)="app.openSettings()">
+          <i class="fa-solid fa-gear"></i>
+          Settings
+        </button>
+        <div class="user-menu-divider"></div>
+        <button class="user-menu-item danger" (click)="app.handleLogout()">
+          <i class="fa-solid fa-right-from-bracket"></i>
+          Sign out
+        </button>
+      </div>
+    }
+  </div>
+</mat-toolbar>

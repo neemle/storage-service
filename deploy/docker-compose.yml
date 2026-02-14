@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: nss
+      POSTGRES_PASSWORD: nss
+      POSTGRES_DB: nss
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nss -d nss"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  master:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.master
+    env_file:
+      - ../.env
+    environment:
+      NSS_MODE: master
+      NSS_POSTGRES_DSN: postgres://nss:nss@postgres:5432/nss?sslmode=disable
+      NSS_DATA_DIRS: /data
+      NSS_INTERNAL_ADVERTISE: http://master:9003
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+      - "9003:9003"
+      - "9100:9100"
+    volumes:
+      - master-data:/data
+
+  replica:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.replica
+    profiles:
+      - replica
+    env_file:
+      - ../.env
+    environment:
+      NSS_MODE: replica
+      NSS_POSTGRES_DSN: postgres://nss:nss@postgres:5432/nss?sslmode=disable
+      NSS_DATA_DIRS: /data
+      NSS_MASTER_URL: http://master:9003
+      NSS_JOIN_TOKEN: ${NSS_JOIN_TOKEN:-}
+      NSS_REPLICA_SUB_MODE: ${NSS_REPLICA_SUB_MODE:-delivery}
+      NSS_REPLICA_ADVERTISE: http://replica:9010
+    depends_on:
+      postgres:
+        condition: service_healthy
+      master:
+        condition: service_started
+    ports:
+      - "9004:9000"
+      - "9010:9010"
+      - "9101:9100"
+    volumes:
+      - replica-data:/data
+
+  redis:
+    image: redis:7-alpine
+    profiles:
+      - redis
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    profiles:
+      - rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+volumes:
+  master-data:
+  replica-data:

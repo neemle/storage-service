@@ -1,0 +1,7 @@
+{
+  "name": "neemle-storage-service",
+  "private": true,
+  "scripts": {
+    "build:dist": "bash scripts/build-dist.sh"
+  }
+}

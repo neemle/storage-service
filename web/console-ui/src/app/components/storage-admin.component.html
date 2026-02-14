@@ -1,0 +1,450 @@
+<mat-card class="card" style="margin-top:20px" data-testid="storage-protection-card">
+  <div class="card-head">
+    <div class="card-head-info">
+      <mat-icon>security</mat-icon>
+      <div>
+        <h2>Storage protection</h2>
+        <p>Manage WORM, snapshots, backups, and replica delivery modes</p>
+      </div>
+    </div>
+    <div class="card-head-actions">
+      <button
+        mat-icon-button
+        title="Refresh storage"
+        aria-label="Refresh storage"
+        [disabled]="app.storageLoading()"
+        (click)="app.refreshStorageAdmin()"
+      >
+        <i
+          class="fa-solid"
+          [class.fa-rotate]="!app.storageLoading()"
+          [class.fa-spinner]="app.storageLoading()"
+          [class.fa-spin]="app.storageLoading()"
+        ></i>
+      </button>
+    </div>
+  </div>
+
+  <section class="storage-help" data-testid="storage-help-hints">
+    <div class="storage-help-item">
+      <h3>Backup strategy hints</h3>
+      <ul>
+        <li><strong>3-2-1:</strong> baseline resilience for most teams.</li>
+        <li><strong>3-2-1-1-0:</strong> compliance path with immutable + verified copies.</li>
+        <li><strong>4-3-2:</strong> extra copy depth for high-change workloads.</li>
+      </ul>
+    </div>
+    <div class="storage-help-item">
+      <h3>WORM backup bucket</h3>
+      <ul>
+        <li>Set the backup bucket to WORM before creating backup policies.</li>
+        <li>WORM allows first write and blocks overwrite/delete mutations.</li>
+      </ul>
+    </div>
+    <div class="storage-help-item">
+      <h3>Snapshots and restore</h3>
+      <ul>
+        <li>Create snapshots before risky migrations or bulk updates.</li>
+        <li>Restore always creates a new bucket to preserve source state.</li>
+      </ul>
+    </div>
+    <div class="storage-help-item">
+      <h3>Replica sub-modes</h3>
+      <ul>
+        <li><strong>delivery:</strong> serves read traffic from replicas.</li>
+        <li><strong>backup:</strong> blocks client serving and keeps node backup-focused.</li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="storage-grid">
+    <section class="storage-section" data-testid="worm-section">
+      <h3>WORM backup bucket</h3>
+      <mat-form-field appearance="outline">
+        <mat-label>WORM bucket</mat-label>
+        <mat-select
+          [value]="app.wormBucketName()"
+          (selectionChange)="app.handleSelectWormBucket($event.value)"
+        >
+          @for (bucket of app.buckets(); track app.trackBucket($index, bucket)) {
+            <mat-option [value]="bucket.name">{{ bucket.name }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+      <mat-slide-toggle
+        color="primary"
+        [checked]="app.wormEnabled()"
+        (change)="app.wormEnabled.set($event.checked)"
+      >
+        Enable WORM
+      </mat-slide-toggle>
+      <button mat-raised-button color="primary" (click)="app.handleSetBucketWorm()">Apply WORM</button>
+    </section>
+
+    <section class="storage-section" data-testid="snapshot-section">
+      <h3>Snapshots</h3>
+      <mat-form-field appearance="outline">
+        <mat-label>Snapshot bucket</mat-label>
+        <mat-select
+          [value]="app.storageBucketName()"
+          (selectionChange)="app.handleSelectStorageBucket($event.value)"
+        >
+          @for (bucket of app.buckets(); track app.trackBucket($index, bucket)) {
+            <mat-option [value]="bucket.name">{{ bucket.name }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+
+      <div class="storage-inline-grid">
+        <mat-form-field appearance="outline">
+          <mat-label>Snapshot trigger</mat-label>
+          <mat-select [value]="app.snapshotTrigger()" (selectionChange)="app.snapshotTrigger.set($event.value)">
+            @for (trigger of app.snapshotTriggerOptions; track trigger) {
+              <mat-option [value]="trigger">{{ trigger }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+          <mat-label>Retention</mat-label>
+          <input
+            matInput
+            type="number"
+            min="1"
+            [value]="app.snapshotRetention()"
+            #snapshotRetentionInput
+            (input)="app.setSnapshotRetention(snapshotRetentionInput.value)"
+          />
+        </mat-form-field>
+      </div>
+
+      <mat-slide-toggle
+        color="primary"
+        [checked]="app.snapshotPolicyEnabled()"
+        (change)="app.snapshotPolicyEnabled.set($event.checked)"
+      >
+        Enable snapshot policy
+      </mat-slide-toggle>
+
+      <div class="row">
+        <button mat-raised-button color="primary" (click)="app.handleSaveSnapshotPolicy()">
+          Save snapshot policy
+        </button>
+        @if (app.editingSnapshotPolicyId()) {
+          <button mat-stroked-button (click)="app.clearSnapshotPolicyEditor()">Clear editor</button>
+        }
+        <button mat-stroked-button (click)="app.handleCreateSnapshotNow()">Create snapshot now</button>
+      </div>
+
+      @if (app.snapshotPoliciesForBucket().length > 0) {
+        <div class="data-table storage-table">
+          <div class="table-head cols-snapshot-policy">
+            <span>Trigger</span>
+            <span>Retention</span>
+            <span>Status</span>
+            <span>Actions</span>
+          </div>
+          @for (policy of app.snapshotPoliciesForBucket(); track app.trackSnapshotPolicy($index, policy)) {
+            <div class="table-row cols-snapshot-policy" data-testid="snapshot-policy-row">
+              <div class="cell cell-stack">
+                <strong>{{ policy.trigger_kind }}</strong>
+                <span class="sub">{{ policy.last_snapshot_at ? (policy.last_snapshot_at | date:'short') : 'never' }}</span>
+              </div>
+              <div class="cell">{{ policy.retention_count }}</div>
+              <div class="cell">
+                <span class="pill" [ngClass]="policy.enabled ? 'active' : 'disabled'">
+                  {{ policy.enabled ? 'enabled' : 'disabled' }}
+                </span>
+              </div>
+              <div class="cell cell-actions">
+                <button
+                  mat-icon-button
+                  title="Edit snapshot policy"
+                  aria-label="Edit snapshot policy"
+                  (click)="app.editSnapshotPolicy(policy)"
+                >
+                  <i class="fa-solid fa-pen"></i>
+                </button>
+              </div>
+            </div>
+          }
+        </div>
+      }
+
+      @if (app.snapshots().length > 0) {
+        <div class="data-table storage-table">
+          <div class="table-head cols-snapshot"><span>Created</span><span>Objects</span><span>Actions</span></div>
+          @for (snapshot of app.snapshots(); track app.trackSnapshot($index, snapshot)) {
+            <div class="table-row cols-snapshot" data-testid="snapshot-row">
+              <div class="cell cell-stack">
+                <strong>{{ snapshot.created_at | date:'medium' }}</strong>
+                <span class="sub">{{ snapshot.trigger_kind }}</span>
+              </div>
+              <div class="cell cell-stack">
+                <strong>{{ snapshot.object_count }}</strong>
+                <span class="sub">{{ app.formatBytes(snapshot.total_size_bytes) }}</span>
+              </div>
+              <div class="cell cell-actions">
+                <button mat-icon-button title="Restore" aria-label="Restore" (click)="app.handleRestoreSnapshot(snapshot)">
+                  <i class="fa-solid fa-database"></i>
+                </button>
+              </div>
+            </div>
+          }
+        </div>
+      }
+    </section>
+  </div>
+
+  <div class="storage-grid" style="margin-top:20px">
+    <section class="storage-section" data-testid="backup-policy-section">
+      <h3>Backup policies</h3>
+      <mat-form-field appearance="outline">
+        <mat-label>Policy name</mat-label>
+        <input matInput [value]="app.backupName()" #backupNameInput (input)="app.backupName.set(backupNameInput.value)" />
+      </mat-form-field>
+
+      <div class="storage-inline-grid">
+        <mat-form-field appearance="outline">
+          <mat-label>Scope</mat-label>
+          <mat-select
+            [disabled]="app.editingBackupPolicy()"
+            [value]="app.backupScope()"
+            (selectionChange)="app.backupScope.set($event.value)"
+          >
+            <mat-option value="master">master</mat-option>
+            <mat-option value="replica">replica</mat-option>
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+          <mat-label>Replica node</mat-label>
+          <mat-select
+            [disabled]="app.editingBackupPolicy() || app.backupScope() !== 'replica'"
+            [value]="app.backupNodeId()"
+            (selectionChange)="app.backupNodeId.set($event.value)"
+          >
+            @for (node of app.replicaNodes(); track app.trackNode($index, node)) {
+              <mat-option [value]="node.nodeId">{{ node.addressInternal }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+      </div>
+
+      <div class="storage-inline-grid">
+        <mat-form-field appearance="outline">
+          <mat-label>Source bucket</mat-label>
+          <mat-select
+            [disabled]="app.editingBackupPolicy()"
+            [value]="app.backupSourceBucketName()"
+            (selectionChange)="app.backupSourceBucketName.set($event.value)"
+          >
+            @for (bucket of app.buckets(); track app.trackBucket($index, bucket)) {
+              <mat-option [value]="bucket.name">{{ bucket.name }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+          <mat-label>Backup bucket</mat-label>
+          <mat-select
+            [disabled]="app.editingBackupPolicy()"
+            [value]="app.backupTargetBucketName()"
+            (selectionChange)="app.backupTargetBucketName.set($event.value)"
+          >
+            @for (bucket of app.buckets(); track app.trackBucket($index, bucket)) {
+              <mat-option [value]="bucket.name">{{ bucket.name }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+      </div>
+
+      <div class="storage-inline-grid">
+        <mat-form-field appearance="outline">
+          <mat-label>Backup type</mat-label>
+          <mat-select [value]="app.backupType()" (selectionChange)="app.backupType.set($event.value)">
+            @for (type of app.backupTypeOptions; track type) {
+              <mat-option [value]="type">{{ type }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+          <mat-label>Schedule</mat-label>
+          <mat-select [value]="app.backupSchedule()" (selectionChange)="app.backupSchedule.set($event.value)">
+            @for (schedule of app.backupScheduleOptions; track schedule) {
+              <mat-option [value]="schedule">{{ schedule }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+      </div>
+
+      <div class="storage-inline-grid">
+        <mat-form-field appearance="outline">
+          <mat-label>Strategy</mat-label>
+          <mat-select [value]="app.backupStrategy()" (selectionChange)="app.backupStrategy.set($event.value)">
+            @for (strategy of app.backupStrategyOptions; track strategy) {
+              <mat-option [value]="strategy">{{ strategy }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+          <mat-label>Retention</mat-label>
+          <input
+            matInput
+            type="number"
+            min="1"
+            [value]="app.backupRetention()"
+            #backupRetentionInput
+            (input)="app.setBackupRetention(backupRetentionInput.value)"
+          />
+        </mat-form-field>
+      </div>
+
+      <mat-slide-toggle
+        color="primary"
+        [checked]="app.backupEnabled()"
+        (change)="app.backupEnabled.set($event.checked)"
+      >
+        Enable backup policy
+      </mat-slide-toggle>
+
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>External targets JSON</mat-label>
+        <textarea
+          matInput
+          rows="3"
+          [value]="app.backupExternalTargets()"
+          #externalTargetsInput
+          (input)="app.backupExternalTargets.set(externalTargetsInput.value)"
+        ></textarea>
+      </mat-form-field>
+      <p class="storage-help-note">
+        Use <strong>Show example</strong> to load valid `s3` and `sftp` gateway templates, then adjust endpoint,
+        auth, and headers.
+      </p>
+
+      <div class="row">
+        <button mat-stroked-button (click)="app.handleShowExternalTargetsExample()">
+          Show example
+        </button>
+        <button mat-stroked-button (click)="app.handleTestExternalTargets()">
+          Test remote targets
+        </button>
+        <button mat-raised-button color="primary" (click)="app.handleSaveBackupPolicy()">
+          @if (app.editingBackupPolicy()) {
+            Update backup policy
+          }
+          @if (!app.editingBackupPolicy()) {
+            Create backup policy
+          }
+        </button>
+        @if (app.editingBackupPolicy()) {
+          <button mat-stroked-button (click)="app.clearBackupPolicyEditor()">Cancel edit</button>
+        }
+      </div>
+
+      @if (app.backupPolicies().length > 0) {
+        <div class="data-table storage-table" style="margin-top:12px">
+          <div class="table-head cols-policy"><span>Policy</span><span>Buckets</span><span>Actions</span></div>
+          @for (policy of app.backupPolicies(); track app.trackBackupPolicy($index, policy)) {
+            <div class="table-row cols-policy" data-testid="backup-policy-row">
+              <div class="cell cell-stack">
+                <strong>{{ policy.name }}</strong>
+                <span class="sub">{{ policy.backup_type }} / {{ policy.schedule_kind }}</span>
+              </div>
+              <div class="cell cell-stack">
+                <strong>{{ app.resolveBucketName(policy.source_bucket_id) }}</strong>
+                <span class="sub">to {{ app.resolveBucketName(policy.backup_bucket_id) }}</span>
+              </div>
+              <div class="cell cell-actions">
+                <button
+                  mat-icon-button
+                  title="Edit policy"
+                  aria-label="Edit policy"
+                  (click)="app.editBackupPolicy(policy)"
+                >
+                  <i class="fa-solid fa-pen"></i>
+                </button>
+                <button mat-icon-button title="Run backup" aria-label="Run backup" (click)="app.handleRunBackupPolicy(policy)">
+                  <i class="fa-solid fa-play"></i>
+                </button>
+              </div>
+            </div>
+          }
+        </div>
+      }
+    </section>
+
+    <section class="storage-section" data-testid="backup-runs-section">
+      <h3>Backup runs</h3>
+
+      @if (app.backupRuns().length === 0) {
+        <div class="empty-state sm">
+          <mat-icon>archive</mat-icon>
+          <div class="title">No backup runs yet</div>
+        </div>
+      }
+
+      @if (app.backupRuns().length > 0) {
+        <div class="data-table storage-table">
+          <div class="table-head cols-run"><span>Run</span><span>Status</span><span>Export</span></div>
+          @for (run of app.backupRuns(); track app.trackBackupRun($index, run)) {
+            <div class="table-row cols-run" data-testid="backup-run-row">
+              <div class="cell cell-stack">
+                <strong>{{ run.started_at | date:'medium' }}</strong>
+                <span class="sub">{{ run.trigger_kind }}</span>
+                <span class="sub text-mono">{{ run.id }}</span>
+              </div>
+              <div class="cell">
+                <span class="pill" [ngClass]="run.status">{{ run.status }}</span>
+              </div>
+              <div class="cell cell-actions">
+                <button mat-icon-button title="Export tar" aria-label="Export tar" (click)="app.handleExportBackupRun(run, 'tar')">
+                  <i class="fa-solid fa-file-zipper"></i>
+                </button>
+                <button
+                  mat-icon-button
+                  title="Export tar.gz"
+                  aria-label="Export tar.gz"
+                  (click)="app.handleExportBackupRun(run, 'tar.gz')"
+                >
+                  <i class="fa-solid fa-file-arrow-down"></i>
+                </button>
+              </div>
+            </div>
+          }
+        </div>
+      }
+
+      <h3 style="margin-top:20px">Replica mode</h3>
+      @if (app.replicaNodes().length === 0) {
+        <div class="empty-state sm">
+          <mat-icon>dns</mat-icon>
+          <div class="title">No replica nodes connected</div>
+        </div>
+      }
+      @if (app.replicaNodes().length > 0) {
+        <mat-list>
+          @for (node of app.replicaNodes(); track app.trackReplicaMode($index, node)) {
+            <mat-list-item>
+              <div class="list-row">
+                <div class="list-row-info">
+                  <strong>{{ node.addressInternal }}</strong>
+                  <span class="sub">{{ node.nodeId }}</span>
+                </div>
+                <mat-form-field appearance="outline" class="storage-replica-select">
+                  <mat-label>Mode</mat-label>
+                  <mat-select
+                    [value]="app.getReplicaMode(node.nodeId)"
+                    (selectionChange)="app.handleSetReplicaMode(node, $event.value)"
+                  >
+                    @for (mode of replicaSubModes; track mode) {
+                      <mat-option [value]="mode">{{ mode }}</mat-option>
+                    }
+                  </mat-select>
+                </mat-form-field>
+              </div>
+            </mat-list-item>
+          }
+        </mat-list>
+      }
+    </section>
+  </div>
+</mat-card>

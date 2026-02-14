@@ -1,0 +1,13 @@
+{
+  epoll_ctl_event_padding
+  Memcheck:Param
+  epoll_ctl(event)
+  fun:epoll_ctl
+}
+
+{
+  epoll_ctl_event_padding_glibc
+  Memcheck:Param
+  epoll_ctl(event)
+  fun:__GI_epoll_ctl
+}
