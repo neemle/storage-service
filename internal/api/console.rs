@@ -1703,11 +1703,7 @@ mod tests {
         (state, jar)
     }
 
-    async fn seed_worm_object(
-        state: &crate::api::AppState,
-        bucket_id: Uuid,
-        key: &str,
-    ) {
+    async fn seed_worm_object(state: &crate::api::AppState, bucket_id: Uuid, key: &str) {
         let checksum = Checksum::compute(state.config.checksum_algo, b"worm-data");
         let chunk_id = Uuid::new_v4();
         state
@@ -2218,9 +2214,13 @@ mod tests {
         let (state, jar) = build_oidc_callback_state_and_jar().await;
         let mut broken = state.clone();
         broken.repo = test_support::broken_repo();
-        let user_err = oidc_callback(State(broken), jar.clone(), oidc_query(Some("code"), Some("state-1")))
-            .await
-            .unwrap_err();
+        let user_err = oidc_callback(
+            State(broken),
+            jar.clone(),
+            oidc_query(Some("code"), Some("state-1")),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(user_err.0, StatusCode::UNAUTHORIZED);
         let _guard = crate::auth::token::force_issue_error_guard();
         let token_err = oidc_callback(State(state), jar, oidc_query(Some("code"), Some("state-1")))

@@ -52,12 +52,18 @@ impl<'a> ResolvedBackupPolicyPatch<'a> {
         Self {
             name: patch.name.as_deref().unwrap_or(existing.name.as_str()),
             node_id: patch.node_id.unwrap_or(existing.node_id),
-            backup_type: patch.backup_type.as_deref().unwrap_or(existing.backup_type.as_str()),
+            backup_type: patch
+                .backup_type
+                .as_deref()
+                .unwrap_or(existing.backup_type.as_str()),
             schedule_kind: patch
                 .schedule_kind
                 .as_deref()
                 .unwrap_or(existing.schedule_kind.as_str()),
-            strategy: patch.strategy.as_deref().unwrap_or(existing.strategy.as_str()),
+            strategy: patch
+                .strategy
+                .as_deref()
+                .unwrap_or(existing.strategy.as_str()),
             retention_count: patch.retention_count.unwrap_or(existing.retention_count),
             enabled: patch.enabled.unwrap_or(existing.enabled),
             external_targets: patch
@@ -513,22 +519,22 @@ impl Repo {
     ) -> Result<BackupPolicy, sqlx::Error> {
         let now = Utc::now();
         sqlx::query_as::<_, BackupPolicy>(insert_backup_policy_sql())
-        .bind(&input.name)
-        .bind(&input.scope)
-        .bind(input.node_id)
-        .bind(input.source_bucket_id)
-        .bind(input.backup_bucket_id)
-        .bind(&input.backup_type)
-        .bind(&input.schedule_kind)
-        .bind(&input.strategy)
-        .bind(input.retention_count)
-        .bind(input.enabled)
-        .bind(&input.external_targets_json)
-        .bind(input.created_by_user_id)
-        .bind(now)
-        .bind(now)
-        .fetch_one(self.pool())
-        .await
+            .bind(&input.name)
+            .bind(&input.scope)
+            .bind(input.node_id)
+            .bind(input.source_bucket_id)
+            .bind(input.backup_bucket_id)
+            .bind(&input.backup_type)
+            .bind(&input.schedule_kind)
+            .bind(&input.strategy)
+            .bind(input.retention_count)
+            .bind(input.enabled)
+            .bind(&input.external_targets_json)
+            .bind(input.created_by_user_id)
+            .bind(now)
+            .bind(now)
+            .fetch_one(self.pool())
+            .await
     }
 
     pub async fn update_backup_policy(
@@ -540,9 +546,7 @@ impl Repo {
             return Ok(None);
         };
         let resolved = ResolvedBackupPolicyPatch::from(&existing, patch);
-        let updated = self
-            .update_backup_policy_row(policy_id, &resolved)
-            .await?;
+        let updated = self.update_backup_policy_row(policy_id, &resolved).await?;
         Ok(Some(updated))
     }
 
@@ -642,13 +646,11 @@ impl Repo {
         archive_size_bytes: i64,
     ) -> Result<(), sqlx::Error> {
         let now = Utc::now();
-        sqlx::query(
-            concat!(
-                "UPDATE backup_runs SET status='success', archive_object_key=$1, ",
-                "archive_size_bytes=$2, completed_at=$3 ",
-                "WHERE id=$4",
-            ),
-        )
+        sqlx::query(concat!(
+            "UPDATE backup_runs SET status='success', archive_object_key=$1, ",
+            "archive_size_bytes=$2, completed_at=$3 ",
+            "WHERE id=$4",
+        ))
         .bind(archive_object_key)
         .bind(archive_size_bytes)
         .bind(now)

@@ -132,7 +132,10 @@ fn snapshot_routes() -> Router<AppState> {
             post(upsert_snapshot_policy).get(list_snapshot_policies),
         )
         .route("/admin/v1/storage/snapshots", post(create_snapshot))
-        .route("/admin/v1/storage/snapshots/{bucket_name}", get(list_snapshots))
+        .route(
+            "/admin/v1/storage/snapshots/{bucket_name}",
+            get(list_snapshots),
+        )
         .route(
             "/admin/v1/storage/snapshots/{snapshot_id}/restore",
             post(restore_snapshot),
@@ -259,11 +262,16 @@ async fn upsert_snapshot_policy(
 fn validate_snapshot_policy_request(
     payload: &UpsertSnapshotPolicyRequest,
 ) -> Result<(), (StatusCode, String)> {
-    if !backup::is_valid_snapshot_trigger(&payload.trigger_kind) || payload.trigger_kind == "on_demand" {
+    if !backup::is_valid_snapshot_trigger(&payload.trigger_kind)
+        || payload.trigger_kind == "on_demand"
+    {
         return Err((StatusCode::BAD_REQUEST, "invalid snapshot trigger".into()));
     }
     if payload.retention_count < 1 {
-        return Err((StatusCode::BAD_REQUEST, "retentionCount must be >= 1".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "retentionCount must be >= 1".into(),
+        ));
     }
     Ok(())
 }
@@ -553,7 +561,10 @@ fn validate_optional_backup_retention(value: Option<i32>) -> Result<(), (StatusC
     if value.is_none_or(|entry| entry >= 1) {
         return Ok(());
     }
-    Err((StatusCode::BAD_REQUEST, "retentionCount must be >= 1".into()))
+    Err((
+        StatusCode::BAD_REQUEST,
+        "retentionCount must be >= 1".into(),
+    ))
 }
 
 fn validate_external_targets(raw: Option<&serde_json::Value>) -> Result<(), (StatusCode, String)> {
