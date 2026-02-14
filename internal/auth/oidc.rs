@@ -136,36 +136,8 @@ async fn exchange_code_for_id_token(
     oidc: &OidcConfig,
     code: &str,
 ) -> Result<String, String> {
-    let mut form = vec![
-        ("grant_type", "authorization_code".to_string()),
-        ("code", code.to_string()),
-        ("redirect_uri", oidc.redirect_url.clone()),
-        ("client_id", oidc.client_id.clone()),
-    ];
-    if let Some(secret) = &oidc.client_secret {
-        form.push(("client_secret", secret.clone()));
-    }
-    let response = match client
-        .post(&metadata.token_endpoint)
-        .form(&form)
-        .send()
-        .await
-    {
-        Ok(value) => value,
-        Err(_) => return Err("oidc token request failed".to_string()),
-    };
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        return Err(format!("oidc token exchange failed: {status}"));
-    }
-    let payload = match response.json::<TokenResponse>().await {
-        Ok(value) => value,
-        Err(_) => return Err("oidc token payload invalid".to_string()),
-    };
-    if payload.id_token.trim().is_empty() {
-        return Err("oidc token payload missing id_token".into());
-    }
-    Ok(payload.id_token)
+    let response = request_token_exchange(client, metadata, oidc, code).await?;
+    read_id_token_from_response(response).await
 }
 
 async fn verify_id_token(
@@ -175,52 +147,114 @@ async fn verify_id_token(
     id_token: &str,
     nonce: &str,
 ) -> Result<OidcIdentity, String> {
-    let header = match decode_header(id_token) {
-        Ok(value) => value,
-        Err(_) => return Err("oidc token header invalid".to_string()),
-    };
-    if !is_supported_alg(header.alg) {
-        return Err("unsupported oidc signing algorithm".into());
-    }
-    let claims = {
-        #[cfg(test)]
-        if should_skip_signature_validation() {
-            decode_unverified_claims(id_token)?
-        } else {
-            let jwks = fetch_jwks(client, &metadata.jwks_uri).await?;
-            let jwk = select_jwk(&jwks.keys, header.kid.as_deref())?;
-            let key = match DecodingKey::from_jwk(jwk) {
-                Ok(value) => value,
-                Err(_) => return Err("oidc key parse failed".to_string()),
-            };
-            let mut validation = Validation::new(header.alg);
-            validation.validate_nbf = true;
-            validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
-            validation.set_issuer(&[metadata.issuer.as_str()]);
-            validation.set_audience(&[oidc.audience.as_str()]);
-            decode::<Value>(id_token, &key, &validation)
-                .map_err(|_| "oidc token validation failed".to_string())?
-                .claims
-        }
-        #[cfg(not(test))]
-        {
-            let jwks = fetch_jwks(client, &metadata.jwks_uri).await?;
-            let jwk = select_jwk(&jwks.keys, header.kid.as_deref())?;
-            let key = match DecodingKey::from_jwk(jwk) {
-                Ok(value) => value,
-                Err(_) => return Err("oidc key parse failed".to_string()),
-            };
-            let mut validation = Validation::new(header.alg);
-            validation.validate_nbf = true;
-            validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
-            validation.set_issuer(&[metadata.issuer.as_str()]);
-            validation.set_audience(&[oidc.audience.as_str()]);
-            decode::<Value>(id_token, &key, &validation)
-                .map_err(|_| "oidc token validation failed".to_string())?
-                .claims
-        }
-    };
+    let header = parse_token_header(id_token)?;
+    ensure_supported_signing_alg(header.alg)?;
+    let claims = decode_id_token_claims(client, metadata, oidc, id_token, &header).await?;
     extract_identity(&claims, oidc, nonce)
+}
+
+fn token_exchange_form(oidc: &OidcConfig, code: &str) -> Vec<(&'static str, String)> {
+    let mut form = vec![
+        ("grant_type", "authorization_code".to_string()),
+        ("code", code.to_string()),
+        ("redirect_uri", oidc.redirect_url.clone()),
+        ("client_id", oidc.client_id.clone()),
+    ];
+    if let Some(secret) = &oidc.client_secret {
+        form.push(("client_secret", secret.clone()));
+    }
+    form
+}
+
+async fn request_token_exchange(
+    client: &reqwest::Client,
+    metadata: &DiscoveryResponse,
+    oidc: &OidcConfig,
+    code: &str,
+) -> Result<reqwest::Response, String> {
+    let form = token_exchange_form(oidc, code);
+    let response = client
+        .post(&metadata.token_endpoint)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|_| "oidc token request failed".to_string())?;
+    if response.status().is_success() {
+        return Ok(response);
+    }
+    Err(format!(
+        "oidc token exchange failed: {}",
+        response.status().as_u16()
+    ))
+}
+
+async fn read_id_token_from_response(response: reqwest::Response) -> Result<String, String> {
+    let payload = response
+        .json::<TokenResponse>()
+        .await
+        .map_err(|_| "oidc token payload invalid".to_string())?;
+    if payload.id_token.trim().is_empty() {
+        return Err("oidc token payload missing id_token".into());
+    }
+    Ok(payload.id_token)
+}
+
+fn parse_token_header(id_token: &str) -> Result<jsonwebtoken::Header, String> {
+    decode_header(id_token).map_err(|_| "oidc token header invalid".to_string())
+}
+
+fn ensure_supported_signing_alg(alg: Algorithm) -> Result<(), String> {
+    if is_supported_alg(alg) {
+        return Ok(());
+    }
+    Err("unsupported oidc signing algorithm".into())
+}
+
+async fn decode_id_token_claims(
+    client: &reqwest::Client,
+    metadata: &DiscoveryResponse,
+    oidc: &OidcConfig,
+    id_token: &str,
+    header: &jsonwebtoken::Header,
+) -> Result<Value, String> {
+    #[cfg(test)]
+    if should_skip_signature_validation() {
+        return decode_unverified_claims(id_token);
+    }
+    decode_signed_id_token_claims(client, metadata, oidc, id_token, header).await
+}
+
+async fn decode_signed_id_token_claims(
+    client: &reqwest::Client,
+    metadata: &DiscoveryResponse,
+    oidc: &OidcConfig,
+    id_token: &str,
+    header: &jsonwebtoken::Header,
+) -> Result<Value, String> {
+    let jwks = fetch_jwks(client, &metadata.jwks_uri).await?;
+    let jwk = select_jwk(&jwks.keys, header.kid.as_deref())?;
+    let key = decoding_key_from_jwk(jwk)?;
+    let validation = token_validation(header, metadata, oidc);
+    decode::<Value>(id_token, &key, &validation)
+        .map_err(|_| "oidc token validation failed".to_string())
+        .map(|decoded| decoded.claims)
+}
+
+fn decoding_key_from_jwk(jwk: &Jwk) -> Result<DecodingKey, String> {
+    DecodingKey::from_jwk(jwk).map_err(|_| "oidc key parse failed".to_string())
+}
+
+fn token_validation(
+    header: &jsonwebtoken::Header,
+    metadata: &DiscoveryResponse,
+    oidc: &OidcConfig,
+) -> Validation {
+    let mut validation = Validation::new(header.alg);
+    validation.validate_nbf = true;
+    validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
+    validation.set_issuer(&[metadata.issuer.as_str()]);
+    validation.set_audience(&[oidc.audience.as_str()]);
+    validation
 }
 
 #[cfg(test)]

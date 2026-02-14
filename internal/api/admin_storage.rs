@@ -111,23 +111,36 @@ struct ReplicaModeResponse {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route(
-            "/admin/v1/storage/buckets/{bucket_name}/worm",
-            patch(update_bucket_worm),
-        )
+        .merge(bucket_routes())
+        .merge(snapshot_routes())
+        .merge(backup_routes())
+        .merge(replica_routes())
+        .with_state(state)
+}
+
+fn bucket_routes() -> Router<AppState> {
+    Router::new().route(
+        "/admin/v1/storage/buckets/{bucket_name}/worm",
+        patch(update_bucket_worm),
+    )
+}
+
+fn snapshot_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/admin/v1/storage/snapshot-policies",
             post(upsert_snapshot_policy).get(list_snapshot_policies),
         )
         .route("/admin/v1/storage/snapshots", post(create_snapshot))
-        .route(
-            "/admin/v1/storage/snapshots/{bucket_name}",
-            get(list_snapshots),
-        )
+        .route("/admin/v1/storage/snapshots/{bucket_name}", get(list_snapshots))
         .route(
             "/admin/v1/storage/snapshots/{snapshot_id}/restore",
             post(restore_snapshot),
         )
+}
+
+fn backup_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/admin/v1/storage/backup-policies",
             post(create_backup_policy).get(list_backup_policies),
@@ -149,11 +162,13 @@ pub fn router(state: AppState) -> Router {
             "/admin/v1/storage/backups/runs/{run_id}/export",
             get(export_backup_run),
         )
-        .route(
-            "/admin/v1/cluster/replicas/{node_id}/mode",
-            patch(update_replica_mode),
-        )
-        .with_state(state)
+}
+
+fn replica_routes() -> Router<AppState> {
+    Router::new().route(
+        "/admin/v1/cluster/replicas/{node_id}/mode",
+        patch(update_replica_mode),
+    )
 }
 
 fn unauthorized_error() -> (StatusCode, String) {
@@ -235,30 +250,41 @@ async fn upsert_snapshot_policy(
     Json(payload): Json<UpsertSnapshotPolicyRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let user_id = require_admin(&state, &headers, &jar).await?;
-    if !backup::is_valid_snapshot_trigger(&payload.trigger_kind)
-        || payload.trigger_kind == "on_demand"
-    {
+    validate_snapshot_policy_request(&payload)?;
+    let bucket = load_bucket_by_name(&state, &payload.bucket_name).await?;
+    let policy = upsert_snapshot_policy_record(&state, &payload, bucket.id, user_id).await?;
+    Ok(Json(json!(policy)))
+}
+
+fn validate_snapshot_policy_request(
+    payload: &UpsertSnapshotPolicyRequest,
+) -> Result<(), (StatusCode, String)> {
+    if !backup::is_valid_snapshot_trigger(&payload.trigger_kind) || payload.trigger_kind == "on_demand" {
         return Err((StatusCode::BAD_REQUEST, "invalid snapshot trigger".into()));
     }
     if payload.retention_count < 1 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "retentionCount must be >= 1".into(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "retentionCount must be >= 1".into()));
     }
-    let bucket = load_bucket_by_name(&state, &payload.bucket_name).await?;
-    let policy = state
+    Ok(())
+}
+
+async fn upsert_snapshot_policy_record(
+    state: &AppState,
+    payload: &UpsertSnapshotPolicyRequest,
+    bucket_id: Uuid,
+    user_id: Uuid,
+) -> Result<crate::meta::models::BucketSnapshotPolicy, (StatusCode, String)> {
+    state
         .repo
         .upsert_snapshot_policy(
-            bucket.id,
+            bucket_id,
             payload.trigger_kind.as_str(),
             payload.retention_count,
             payload.enabled,
             Some(user_id),
         )
         .await
-        .map_err(internal_error)?;
-    Ok(Json(json!(policy)))
+        .map_err(internal_error)
 }
 
 async fn list_snapshot_policies(
@@ -354,38 +380,69 @@ async fn create_backup_policy(
     validate_backup_policy_payload(&payload)?;
     validate_external_targets(payload.external_targets.as_ref())?;
     let source_bucket = load_bucket_by_name(&state, &payload.source_bucket_name).await?;
-    let backup_bucket = load_bucket_by_name(&state, &payload.backup_bucket_name).await?;
-    if !backup_bucket.is_worm {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "backup bucket must be WORM-enabled".into(),
-        ));
-    }
-    if let Some(node_id) = payload.node_id {
-        let node = state.repo.get_node(node_id).await.map_err(internal_error)?;
-        if node.is_none() {
-            return Err((StatusCode::NOT_FOUND, "replica node not found".into()));
-        }
-    }
+    let backup_bucket = ensure_worm_backup_bucket(&state, &payload.backup_bucket_name).await?;
+    ensure_replica_node_exists(&state, payload.node_id).await?;
     let policy = state
         .repo
-        .create_backup_policy(&BackupPolicyCreate {
-            name: payload.name,
-            scope: payload.scope,
-            node_id: payload.node_id,
-            source_bucket_id: source_bucket.id,
-            backup_bucket_id: backup_bucket.id,
-            backup_type: payload.backup_type,
-            schedule_kind: payload.schedule_kind,
-            strategy: payload.strategy,
-            retention_count: payload.retention_count,
-            enabled: payload.enabled.unwrap_or(true),
-            external_targets_json: payload.external_targets.unwrap_or_else(|| json!([])),
-            created_by_user_id: Some(user_id),
-        })
+        .create_backup_policy(&build_backup_policy_create(
+            payload,
+            source_bucket.id,
+            backup_bucket.id,
+            user_id,
+        ))
         .await
         .map_err(internal_error)?;
     Ok(Json(policy))
+}
+
+async fn ensure_worm_backup_bucket(
+    state: &AppState,
+    bucket_name: &str,
+) -> Result<crate::meta::models::Bucket, (StatusCode, String)> {
+    let bucket = load_bucket_by_name(state, bucket_name).await?;
+    if bucket.is_worm {
+        return Ok(bucket);
+    }
+    Err((
+        StatusCode::BAD_REQUEST,
+        "backup bucket must be WORM-enabled".into(),
+    ))
+}
+
+async fn ensure_replica_node_exists(
+    state: &AppState,
+    node_id: Option<Uuid>,
+) -> Result<(), (StatusCode, String)> {
+    let Some(node_id) = node_id else {
+        return Ok(());
+    };
+    let node = state.repo.get_node(node_id).await.map_err(internal_error)?;
+    if node.is_some() {
+        return Ok(());
+    }
+    Err((StatusCode::NOT_FOUND, "replica node not found".into()))
+}
+
+fn build_backup_policy_create(
+    payload: CreateBackupPolicyRequest,
+    source_bucket_id: Uuid,
+    backup_bucket_id: Uuid,
+    user_id: Uuid,
+) -> BackupPolicyCreate {
+    BackupPolicyCreate {
+        name: payload.name,
+        scope: payload.scope,
+        node_id: payload.node_id,
+        source_bucket_id,
+        backup_bucket_id,
+        backup_type: payload.backup_type,
+        schedule_kind: payload.schedule_kind,
+        strategy: payload.strategy,
+        retention_count: payload.retention_count,
+        enabled: payload.enabled.unwrap_or(true),
+        external_targets_json: payload.external_targets.unwrap_or_else(|| json!([])),
+        created_by_user_id: Some(user_id),
+    }
 }
 
 fn validate_backup_policy_payload(
@@ -464,34 +521,39 @@ async fn update_backup_policy(
 fn validate_backup_policy_patch(
     payload: &UpdateBackupPolicyRequest,
 ) -> Result<(), (StatusCode, String)> {
-    if payload
-        .backup_type
-        .as_ref()
-        .is_some_and(|value| !backup::is_valid_backup_type(value))
-    {
-        return Err((StatusCode::BAD_REQUEST, "invalid backup type".into()));
-    }
-    if payload
-        .schedule_kind
-        .as_ref()
-        .is_some_and(|value| !backup::is_valid_backup_schedule(value))
-    {
-        return Err((StatusCode::BAD_REQUEST, "invalid backup schedule".into()));
-    }
-    if payload
-        .strategy
-        .as_ref()
-        .is_some_and(|value| !backup::is_valid_backup_strategy(value))
-    {
-        return Err((StatusCode::BAD_REQUEST, "invalid backup strategy".into()));
-    }
-    if payload.retention_count.is_some_and(|value| value < 1) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "retentionCount must be >= 1".into(),
-        ));
-    }
+    validate_optional_backup_type(payload.backup_type.as_ref())?;
+    validate_optional_backup_schedule(payload.schedule_kind.as_ref())?;
+    validate_optional_backup_strategy(payload.strategy.as_ref())?;
+    validate_optional_backup_retention(payload.retention_count)?;
     Ok(())
+}
+
+fn validate_optional_backup_type(value: Option<&String>) -> Result<(), (StatusCode, String)> {
+    if value.is_none_or(|entry| backup::is_valid_backup_type(entry)) {
+        return Ok(());
+    }
+    Err((StatusCode::BAD_REQUEST, "invalid backup type".into()))
+}
+
+fn validate_optional_backup_schedule(value: Option<&String>) -> Result<(), (StatusCode, String)> {
+    if value.is_none_or(|entry| backup::is_valid_backup_schedule(entry)) {
+        return Ok(());
+    }
+    Err((StatusCode::BAD_REQUEST, "invalid backup schedule".into()))
+}
+
+fn validate_optional_backup_strategy(value: Option<&String>) -> Result<(), (StatusCode, String)> {
+    if value.is_none_or(|entry| backup::is_valid_backup_strategy(entry)) {
+        return Ok(());
+    }
+    Err((StatusCode::BAD_REQUEST, "invalid backup strategy".into()))
+}
+
+fn validate_optional_backup_retention(value: Option<i32>) -> Result<(), (StatusCode, String)> {
+    if value.is_none_or(|entry| entry >= 1) {
+        return Ok(());
+    }
+    Err((StatusCode::BAD_REQUEST, "retentionCount must be >= 1".into()))
 }
 
 fn validate_external_targets(raw: Option<&serde_json::Value>) -> Result<(), (StatusCode, String)> {

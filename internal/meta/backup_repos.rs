@@ -36,6 +36,48 @@ pub struct BackupPolicyPatch {
     pub node_id: Option<Option<Uuid>>,
 }
 
+struct ResolvedBackupPolicyPatch<'a> {
+    name: &'a str,
+    node_id: Option<Uuid>,
+    backup_type: &'a str,
+    schedule_kind: &'a str,
+    strategy: &'a str,
+    retention_count: i32,
+    enabled: bool,
+    external_targets: &'a Value,
+}
+
+impl<'a> ResolvedBackupPolicyPatch<'a> {
+    fn from(existing: &'a BackupPolicy, patch: &'a BackupPolicyPatch) -> Self {
+        Self {
+            name: patch.name.as_deref().unwrap_or(existing.name.as_str()),
+            node_id: patch.node_id.unwrap_or(existing.node_id),
+            backup_type: patch.backup_type.as_deref().unwrap_or(existing.backup_type.as_str()),
+            schedule_kind: patch
+                .schedule_kind
+                .as_deref()
+                .unwrap_or(existing.schedule_kind.as_str()),
+            strategy: patch.strategy.as_deref().unwrap_or(existing.strategy.as_str()),
+            retention_count: patch.retention_count.unwrap_or(existing.retention_count),
+            enabled: patch.enabled.unwrap_or(existing.enabled),
+            external_targets: patch
+                .external_targets_json
+                .as_ref()
+                .unwrap_or(&existing.external_targets_json),
+        }
+    }
+}
+
+fn insert_backup_policy_sql() -> &'static str {
+    concat!(
+        "INSERT INTO backup_policies ",
+        "(name, scope, node_id, source_bucket_id, backup_bucket_id, backup_type, schedule_kind, ",
+        "strategy, retention_count, enabled, external_targets_json, ",
+        "created_by_user_id, created_at, updated_at) ",
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *"
+    )
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct SnapshotSourceRow {
     object_key: String,
@@ -470,14 +512,7 @@ impl Repo {
         input: &BackupPolicyCreate,
     ) -> Result<BackupPolicy, sqlx::Error> {
         let now = Utc::now();
-        sqlx::query_as::<_, BackupPolicy>(
-            concat!(
-                "INSERT INTO backup_policies ",
-                "(name, scope, node_id, source_bucket_id, backup_bucket_id, backup_type, schedule_kind, ",
-                "strategy, retention_count, enabled, external_targets_json, created_by_user_id, created_at, updated_at) ",
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *",
-            ),
-        )
+        sqlx::query_as::<_, BackupPolicy>(insert_backup_policy_sql())
         .bind(&input.name)
         .bind(&input.scope)
         .bind(input.node_id)
@@ -501,44 +536,39 @@ impl Repo {
         policy_id: Uuid,
         patch: &BackupPolicyPatch,
     ) -> Result<Option<BackupPolicy>, sqlx::Error> {
-        let existing = self.get_backup_policy(policy_id).await?;
-        let Some(existing) = existing else {
+        let Some(existing) = self.get_backup_policy(policy_id).await? else {
             return Ok(None);
         };
-        let now = Utc::now();
-        let name = patch.name.as_ref().unwrap_or(&existing.name);
-        let backup_type = patch.backup_type.as_ref().unwrap_or(&existing.backup_type);
-        let schedule_kind = patch
-            .schedule_kind
-            .as_ref()
-            .unwrap_or(&existing.schedule_kind);
-        let strategy = patch.strategy.as_ref().unwrap_or(&existing.strategy);
-        let retention_count = patch.retention_count.unwrap_or(existing.retention_count);
-        let enabled = patch.enabled.unwrap_or(existing.enabled);
-        let external_targets = patch
-            .external_targets_json
-            .as_ref()
-            .unwrap_or(&existing.external_targets_json);
-        let node_id = patch.node_id.unwrap_or(existing.node_id);
-        let updated = sqlx::query_as::<_, BackupPolicy>(
+        let resolved = ResolvedBackupPolicyPatch::from(&existing, patch);
+        let updated = self
+            .update_backup_policy_row(policy_id, &resolved)
+            .await?;
+        Ok(Some(updated))
+    }
+
+    async fn update_backup_policy_row(
+        &self,
+        policy_id: Uuid,
+        patch: &ResolvedBackupPolicyPatch<'_>,
+    ) -> Result<BackupPolicy, sqlx::Error> {
+        sqlx::query_as::<_, BackupPolicy>(
             concat!(
                 "UPDATE backup_policies SET name=$1, node_id=$2, backup_type=$3, schedule_kind=$4, strategy=$5, ",
                 "retention_count=$6, enabled=$7, external_targets_json=$8, updated_at=$9 WHERE id=$10 RETURNING *",
             ),
         )
-        .bind(name)
-        .bind(node_id)
-        .bind(backup_type)
-        .bind(schedule_kind)
-        .bind(strategy)
-        .bind(retention_count)
-        .bind(enabled)
-        .bind(external_targets)
-        .bind(now)
+        .bind(patch.name)
+        .bind(patch.node_id)
+        .bind(patch.backup_type)
+        .bind(patch.schedule_kind)
+        .bind(patch.strategy)
+        .bind(patch.retention_count)
+        .bind(patch.enabled)
+        .bind(patch.external_targets)
+        .bind(Utc::now())
         .bind(policy_id)
         .fetch_one(self.pool())
-        .await?;
-        Ok(Some(updated))
+        .await
     }
 
     pub async fn list_backup_policies(&self) -> Result<Vec<BackupPolicy>, sqlx::Error> {
@@ -614,7 +644,8 @@ impl Repo {
         let now = Utc::now();
         sqlx::query(
             concat!(
-                "UPDATE backup_runs SET status='success', archive_object_key=$1, archive_size_bytes=$2, completed_at=$3 ",
+                "UPDATE backup_runs SET status='success', archive_object_key=$1, ",
+                "archive_size_bytes=$2, completed_at=$3 ",
                 "WHERE id=$4",
             ),
         )

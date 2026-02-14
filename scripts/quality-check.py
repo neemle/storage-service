@@ -54,6 +54,9 @@ SKIP_FILES = {
 }
 
 RUST_FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*")
+RUST_ATTR = re.compile(r"^\s*#\[")
+RUST_CFG_TEST_ATTR = re.compile(r"^\s*#\[\s*cfg\s*\(\s*test\s*\)\s*\]")
+RUST_TEST_ATTR = re.compile(r"^\s*#\[\s*(?:tokio::)?test(?:\([^)]*\))?\s*\]")
 TS_JS_FN = re.compile(
     r"^\s*(?:export\s+)?(?:async\s+)?function\s+[A-Za-z_$][A-Za-z0-9_$]*\s*\(|"
     r"^\s*(?:public|private|protected|readonly|static|async|\s)+[A-Za-z_$][A-Za-z0-9_$]*\s*\([^;]*\)\s*\{|"
@@ -181,9 +184,55 @@ def find_python_end(lines: list[str], start: int) -> int:
     return end
 
 
-def count_body_lines(lines: list[str], start: int, end: int, ext: str) -> int:
+def rust_test_ignored_lines(lines: list[str]) -> set[int]:
+    ignored: set[int] = set()
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if not (RUST_CFG_TEST_ATTR.search(line) or RUST_TEST_ATTR.search(line)):
+            idx += 1
+            continue
+        attr_start = idx
+        cursor = idx + 1
+        while cursor < len(lines) and RUST_ATTR.search(lines[cursor]):
+            cursor += 1
+        while cursor < len(lines) and not lines[cursor].strip():
+            cursor += 1
+        if cursor >= len(lines):
+            ignored.add(attr_start + 1)
+            break
+        if lines[cursor].strip().startswith("mod tests") and RUST_CFG_TEST_ATTR.search(line):
+            for line_no in range(attr_start + 1, len(lines) + 1):
+                ignored.add(line_no)
+            break
+        end = find_brace_end(lines, cursor, ".rs")
+        if end is None:
+            ignored.add(attr_start + 1)
+            idx = cursor + 1
+            continue
+        for line_no in range(attr_start + 1, end + 2):
+            ignored.add(line_no)
+        idx = end + 1
+    return ignored
+
+
+def ignored_lines_for_file(path: Path, lines: list[str]) -> set[int]:
+    if path.suffix == ".rs":
+        return rust_test_ignored_lines(lines)
+    return set()
+
+
+def count_body_lines(
+    lines: list[str],
+    start: int,
+    end: int,
+    ext: str,
+    ignored_lines: set[int],
+) -> int:
     total = 0
     for idx in range(start, end + 1):
+        if (idx + 1) in ignored_lines:
+            continue
         if has_code(lines[idx], ext):
             total += 1
     return total
@@ -217,9 +266,16 @@ def changed_lines_since(base: str, path: Path) -> Optional[set[int]]:
     return changed
 
 
-def check_line_lengths(path: Path, lines: list[str], changed_lines: Optional[set[int]]) -> list[str]:
+def check_line_lengths(
+    path: Path,
+    lines: list[str],
+    changed_lines: Optional[set[int]],
+    ignored_lines: set[int],
+) -> list[str]:
     issues: list[str] = []
     for idx, line in enumerate(lines, start=1):
+        if idx in ignored_lines:
+            continue
         if changed_lines is not None and idx not in changed_lines:
             continue
         if len(line) > MAX_LINE_LEN:
@@ -227,7 +283,12 @@ def check_line_lengths(path: Path, lines: list[str], changed_lines: Optional[set
     return issues
 
 
-def check_function_lengths(path: Path, lines: list[str], changed_lines: Optional[set[int]]) -> list[str]:
+def check_function_lengths(
+    path: Path,
+    lines: list[str],
+    changed_lines: Optional[set[int]],
+    ignored_lines: set[int],
+) -> list[str]:
     if path.suffix not in FUNCTION_EXTS:
         return []
     issues: list[str] = []
@@ -235,6 +296,9 @@ def check_function_lengths(path: Path, lines: list[str], changed_lines: Optional
     while idx < len(lines):
         line = lines[idx]
         if not is_function_start(line, path.suffix):
+            idx += 1
+            continue
+        if (idx + 1) in ignored_lines:
             idx += 1
             continue
         if path.suffix == ".py":
@@ -247,7 +311,7 @@ def check_function_lengths(path: Path, lines: list[str], changed_lines: Optional
         if changed_lines is not None and (idx + 1) not in changed_lines:
             idx = end + 1
             continue
-        total = count_body_lines(lines, idx, end, path.suffix)
+        total = count_body_lines(lines, idx, end, path.suffix, ignored_lines)
         if total > MAX_FUNCTION_LINES:
             issues.append(
                 f"{path}:{idx + 1} function size {total} > {MAX_FUNCTION_LINES} "
@@ -273,8 +337,9 @@ def run() -> int:
     for path in files:
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
         changed_lines = changed_lines_since(base, path) if args.changed_lines_only else None
-        issues.extend(check_line_lengths(path, lines, changed_lines))
-        issues.extend(check_function_lengths(path, lines, changed_lines))
+        ignored_lines = ignored_lines_for_file(path, lines)
+        issues.extend(check_line_lengths(path, lines, changed_lines, ignored_lines))
+        issues.extend(check_function_lengths(path, lines, changed_lines, ignored_lines))
 
     if issues:
         print("quality-check failed:")
