@@ -1,5 +1,7 @@
+use nss_core::backup::{test_external_target_connection, ExternalBackupTarget, ExternalTargetKind};
 use nss_core::meta::integration;
 use nss_core::meta::repos::Repo;
+use serde_json::json;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::time::Duration;
 use tokio::sync::OnceCell;
@@ -103,6 +105,44 @@ async fn assert_bucket_visibility(repo: &Repo, user_id: Uuid, bucket_name: &str)
     assert_eq!(buckets[0].name, bucket_name);
 }
 
+fn sftp_target(endpoint: &str) -> ExternalBackupTarget {
+    ExternalBackupTarget {
+        name: "integration-sftp".to_string(),
+        kind: ExternalTargetKind::Sftp,
+        endpoint: endpoint.to_string(),
+        enabled: Some(true),
+        method: None,
+        headers: None,
+        timeout_seconds: Some(1),
+    }
+}
+
+async fn finalize_single_chunk_object_version(
+    repo: &Repo,
+    bucket_id: Uuid,
+    object_key: &str,
+    version_id: &str,
+    chunk_id: Uuid,
+) {
+    repo.insert_chunk_metadata(chunk_id, 4, "sha256", &[1, 2, 3, 4])
+        .await
+        .expect("insert chunk");
+    repo.finalize_object_version(
+        bucket_id,
+        object_key,
+        version_id,
+        4,
+        &format!("etag-{version_id}"),
+        Some("application/octet-stream"),
+        &json!({}),
+        &json!({}),
+        &[chunk_id],
+        false,
+    )
+    .await
+    .expect("finalize object version");
+}
+
 #[tokio::test]
 async fn bucket_configuration_updates() {
     let pool = setup_pool().await;
@@ -199,4 +239,47 @@ async fn provision_user_and_bucket_fails_with_bad_connection() {
         err,
         sqlx::Error::Io(_) | sqlx::Error::PoolTimedOut
     ));
+}
+
+#[tokio::test]
+async fn test_external_sftp_target_connection_reports_connectivity() {
+    let target = sftp_target("sftp://127.0.0.1:1");
+    let err = test_external_target_connection(&target).await.unwrap_err();
+    assert!(err.contains("sftp connectivity check"));
+}
+
+#[tokio::test]
+async fn checksum_lookup_and_current_version_promotion_flow() {
+    let pool = setup_pool().await;
+    reset_db(&pool).await;
+    let repo = Repo::new(pool);
+    let (_user, bucket) = provision_user_and_bucket(&repo).await;
+    let object_key = "coverage-object";
+    let first_chunk = Uuid::new_v4();
+    let second_chunk = Uuid::new_v4();
+
+    finalize_single_chunk_object_version(&repo, bucket.id, object_key, "v1", first_chunk).await;
+    finalize_single_chunk_object_version(&repo, bucket.id, object_key, "v2", second_chunk).await;
+
+    let checksum = repo
+        .get_chunk_checksum(second_chunk)
+        .await
+        .expect("checksum lookup")
+        .expect("checksum exists");
+    assert_eq!(checksum.0, "sha256");
+    assert_eq!(checksum.1, vec![1, 2, 3, 4]);
+
+    let deleted = repo
+        .delete_object_version(bucket.id, object_key, "v2")
+        .await
+        .expect("delete current version");
+    assert!(deleted.found);
+    assert!(deleted.was_current);
+
+    let current = repo
+        .get_object_current(bucket.id, object_key)
+        .await
+        .expect("current object lookup")
+        .expect("current object exists");
+    assert_eq!(current.0.version_id, "v1");
 }
