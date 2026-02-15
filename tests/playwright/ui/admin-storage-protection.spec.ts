@@ -22,6 +22,18 @@ async function openStorageTab(page: Page, tabLabel: 'Nodes' | 'Buckets' | 'Snaps
   await card.getByRole('tab', { name: tabLabel, exact: true }).click();
 }
 
+async function expectStorageTabsWork(page: Page): Promise<void> {
+  const card = page.getByTestId('storage-protection-card');
+  await openStorageTab(page, 'Nodes');
+  await expect(card.getByTestId('node-mode-section')).toBeVisible();
+  await openStorageTab(page, 'Buckets');
+  await expect(card.getByTestId('worm-section')).toBeVisible();
+  await openStorageTab(page, 'Snapshots');
+  await expect(card.getByTestId('snapshot-section')).toBeVisible();
+  await openStorageTab(page, 'Backups');
+  await expect(card.getByTestId('backup-policy-section')).toBeVisible();
+}
+
 async function createBucketFromConsole(page: Page, bucketName: string): Promise<void> {
   await openPrimaryTab(page, 'Buckets');
   const input = page.getByLabel('New bucket name');
@@ -83,15 +95,41 @@ async function enableWorm(page: Page, card: Locator, backupBucket: string): Prom
   await activateButton(applyButton);
 }
 
+async function expectBackupBucketMustBeWorm(
+  page: Page,
+  card: Locator,
+  sourceBucket: string,
+  backupBucket: string
+): Promise<void> {
+  await openStorageTab(page, 'Backups');
+  await typeSlow(card.getByLabel('Policy name'), `invalid-${uniqueSuffix()}`);
+  await chooseBucketInSection(page, 'Backups', 'backup-policy-section', 'Source bucket', sourceBucket);
+  await chooseBucketInSection(page, 'Backups', 'backup-policy-section', 'Backup bucket', backupBucket);
+  await activateButton(card.getByRole('button', { name: 'Create backup policy' }));
+  await expect(page.locator('.error')).toContainText(/worm/i);
+}
+
+async function selectSnapshotTrigger(section: Locator, trigger: 'hourly' | 'on_create_change'): Promise<void> {
+  const select = section.getByRole('combobox', { name: 'Snapshot trigger', exact: true });
+  await select.focus();
+  await select.press('Enter');
+  await section.page().getByRole('option', { name: trigger, exact: true }).click();
+  await expect(select).toContainText(trigger);
+}
+
 async function saveAndEditSnapshotPolicy(page: Page, card: Locator, sourceBucket: string): Promise<void> {
   await chooseBucketInSection(page, 'Snapshots', 'snapshot-section', 'Snapshot bucket', sourceBucket);
+  const section = card.getByTestId('snapshot-section');
+  await selectSnapshotTrigger(section, 'hourly');
   await activateButton(card.getByRole('button', { name: 'Save snapshot policy' }));
   const policyRow = card.getByTestId('snapshot-policy-row').first();
   await expect(policyRow).toBeVisible({ timeout: 20000 });
+  await expect(policyRow).toContainText('hourly');
   await activateButton(policyRow.getByRole('button', { name: 'Edit snapshot policy' }));
-  const section = card.getByTestId('snapshot-section');
+  await selectSnapshotTrigger(section, 'on_create_change');
   await typeSlow(section.getByLabel('Retention'), '3');
   await activateButton(card.getByRole('button', { name: 'Save snapshot policy' }));
+  await expect(policyRow).toContainText('on_create_change', { timeout: 20000 });
   await expect(policyRow).toContainText('3', { timeout: 20000 });
 }
 
@@ -144,6 +182,19 @@ async function createAndEditBackupPolicy(
   return updatedPolicyRow;
 }
 
+async function validateBackupTargetJson(page: Page, card: Locator): Promise<void> {
+  await openStorageTab(page, 'Backups');
+  const targets = card.getByLabel('External targets JSON');
+  await typeSlow(targets, '{');
+  await activateButton(card.getByRole('button', { name: 'Test remote targets' }));
+  await expect(page.locator('.error')).toContainText('valid JSON target objects');
+  page.once('dialog', (dialog) => dialog.accept());
+  await activateButton(card.getByRole('button', { name: 'Show example' }));
+  await expect(targets).toHaveValue(/archive-sftp-gateway/);
+  await typeSlow(targets, '[]');
+  await expect(targets).toHaveValue('[]');
+}
+
 async function runAndExportBackup(page: Page, card: Locator, policyRow: Locator): Promise<void> {
   await openStorageTab(page, 'Backups');
   const runPromise = page.waitForResponse((resp) => {
@@ -170,8 +221,11 @@ async function runAndExportBackup(page: Page, card: Locator, policyRow: Locator)
 
 test('[UC-009][UC-010][UC-012] admin manages snapshots and backups from UI', async ({ page }) => {
   const setup = await setupStorage(page);
+  await expectStorageTabsWork(page);
+  await expectBackupBucketMustBeWorm(page, setup.card, setup.sourceBucket, setup.backupBucket);
   await enableWorm(page, setup.card, setup.backupBucket);
   await saveAndEditSnapshotPolicy(page, setup.card, setup.sourceBucket);
+  await validateBackupTargetJson(page, setup.card);
   await createSnapshotAndRestore(page, setup.card);
   const updatedPolicyRow = await createAndEditBackupPolicy(
     page,

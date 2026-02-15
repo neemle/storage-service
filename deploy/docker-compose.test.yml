@@ -61,6 +61,7 @@ services:
       DB_BASE: nss
       NSS_REPLICA1_JOIN_TOKEN: ${NSS_REPLICA1_JOIN_TOKEN:-replica-1-join-token-demo}
       NSS_REPLICA2_JOIN_TOKEN: ${NSS_REPLICA2_JOIN_TOKEN:-replica-2-join-token-demo}
+      NSS_REPLICA3_JOIN_TOKEN: ${NSS_REPLICA3_JOIN_TOKEN:-replica-3-join-token-demo}
     depends_on:
       postgres:
         condition: service_healthy

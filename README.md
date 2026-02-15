@@ -59,9 +59,13 @@ docker compose up --build
 3. Access endpoints:
 - Unified UI + API: `http://localhost:9001`
 - S3 API: `http://localhost:9000`
-- Replica 1 S3 API (read): `http://localhost:9004`
-- Replica 2 S3 API (read): `http://localhost:9005`
+- Replica 1 S3 API (`slave-delivery`, read): `http://localhost:9004`
+- Replica 2 S3 API (`slave-backup`, serving blocked): `http://localhost:9005`
+- Replica 3 S3 API (`slave-volume`, serving blocked): `http://localhost:9006`
 - Master metrics: `http://localhost:9100/metrics`
+- Replica 1 metrics: `http://localhost:9101/metrics`
+- Replica 2 metrics: `http://localhost:9102/metrics`
+- Replica 3 metrics: `http://localhost:9103/metrics`
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3000`
 - Loki API: `http://localhost:3100`
@@ -236,7 +240,10 @@ cargo clippy --workspace -- -D warnings
 - Root compose stores temporary local data under:
   - Postgres: `.local-data/pg`
   - Master data: `.local-data/master`
-  - Replica data: `.local-data/replicas/replica-1` and `.local-data/replicas/replica-2`
+  - Replica data:
+    - `.local-data/replicas/replica-1` (`slave-delivery`)
+    - `.local-data/replicas/replica-2` (`slave-backup`)
+    - `.local-data/replicas/replica-3` (`slave-volume`)
 
 ## Chunk Encryption At Rest
 
@@ -308,8 +315,12 @@ NSS_OIDC_ADMIN_GROUPS=nss-admin
 
 ## Observability Demo Stack
 
-- Root compose includes one master, two replicas, Prometheus, Loki, Promtail, Grafana, and demo load traffic.
-- Native node metrics are scraped from `/metrics` on master and both replicas.
+- Root compose includes one master, three replicas, Prometheus, Loki, Promtail, Grafana, and demo load traffic.
+- Replica demo roles:
+  - `replica1`: `slave-delivery`
+  - `replica2`: `slave-backup`
+  - `replica3`: `slave-volume`
+- Native node metrics are scraped from `/metrics` on master and all replicas.
 - Loki stores logs in Neemle Storage Service bucket `NSS_OBS_LOKI_BUCKET`.
 - Thanos sidecar uploads Prometheus TSDB blocks to Neemle Storage Service bucket
   `NSS_OBS_PROM_BUCKET`.
@@ -395,6 +406,41 @@ Legacy globals `window.__CONSOLE_API_BASE__` and `window.__ADMIN_API_BASE__` are
 - Every push and pull request also runs Rust advisory audit via `./scripts/security-audit.sh`.
 - Tag pushes (for example `v1.2.3`) also build release binaries and publish GitHub release assets.
 - Release assets include per-platform archives and checksums.
+
+## Feature Competitor Matrix
+
+This matrix is used for roadmap positioning in this repository and compares NSS against 10 common competitors.
+
+Compared competitors:
+- Amazon S3
+- Azure Blob Storage
+- Google Cloud Storage
+- Cloudflare R2
+- Wasabi
+- Backblaze B2
+- MinIO
+- Ceph RGW
+- OpenStack Swift
+- DigitalOcean Spaces
+
+Legend:
+- `Yes`: native capability
+- `Partial`: available with constraints/add-ons/edition differences
+- `No`: not a first-class capability
+
+| Feature | NSS | S3 | Azure Blob | GCS | R2 | Wasabi | B2 | MinIO | Ceph RGW | Swift | DO Spaces |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| S3-compatible API | Yes | Yes | Partial | Partial | Yes | Yes | Yes | Yes | Yes | Partial | Yes |
+| Public/private access and presigned URLs | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Partial | Yes |
+| WORM / immutability | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Partial | Partial | Partial |
+| Versioning | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Lifecycle/retention policies | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Partial | Partial | Partial | Yes |
+| Dedicated delivery-node reads | Yes | Partial | No | No | No | No | No | Partial | Partial | No | No |
+| Snapshot policy + restore to new bucket | Yes | No | No | No | No | No | No | Partial | Partial | No | No |
+| Full/incremental/differential backup policies | Yes | No | No | No | No | No | No | No | No | No | No |
+| External backup targets (S3/Glacier/SFTP/other) | Yes | No | No | No | No | No | No | No | Partial | No | No |
+| Internal and federated auth (OIDC/OAuth2/SAML2 bridge) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Partial | Partial | Yes |
+| Self-hosted deployment | Yes | No | No | No | No | No | No | Yes | Yes | Yes | No |
 
 ## Push Checklist
 

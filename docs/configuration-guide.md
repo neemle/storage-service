@@ -162,6 +162,8 @@ The repository includes `.env.dist` as the default local template. Copy it to `.
   - Static join token used by root compose demo for `replica1`.
 - `NSS_REPLICA2_JOIN_TOKEN=replica-2-join-token-demo`
   - Static join token used by root compose demo for `replica2`.
+- `NSS_REPLICA3_JOIN_TOKEN=replica-3-join-token-demo`
+  - Static join token used by root compose demo for `replica3`.
 - `NSS_OBS_ACCESS_KEY_LABEL=observability-bootstrap`
   - Label used when observability bootstrap creates an S3 access key.
 - `NSS_OBS_LOKI_BUCKET=nss-observability-loki`

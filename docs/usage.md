@@ -266,7 +266,8 @@ How NSS solves it:
 
 - Exposes native Prometheus metrics endpoint (`/metrics`) on nodes.
 - Supports Loki log storage and Prometheus block storage in dedicated NSS buckets.
-- Provides demo topology with one master, two replicas, and preprovisioned Grafana dashboards.
+- Provides demo topology with one master and three replicas (`slave-delivery`, `slave-backup`,
+  `slave-volume`), plus preprovisioned Grafana dashboards.
 
 Operational result:
 

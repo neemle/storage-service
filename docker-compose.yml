@@ -97,7 +97,7 @@ services:
       NSS_DATA_DIRS: /data
       NSS_MASTER_URL: http://master:9003
       NSS_JOIN_TOKEN: ${NSS_REPLICA2_JOIN_TOKEN}
-      NSS_REPLICA_SUB_MODE: delivery
+      NSS_REPLICA_SUB_MODE: backup
       NSS_REPLICA_ADVERTISE: http://replica2:9010
     depends_on:
       join-token-seed:
@@ -110,6 +110,32 @@ services:
       - "9102:9100"
     volumes:
       - ./.local-data/replicas/replica-2:/data
+
+  replica3:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.replica
+    env_file:
+      - .env
+    environment:
+      NSS_MODE: replica
+      NSS_POSTGRES_DSN: postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_BASE}?sslmode=disable
+      NSS_DATA_DIRS: /data
+      NSS_MASTER_URL: http://master:9003
+      NSS_JOIN_TOKEN: ${NSS_REPLICA3_JOIN_TOKEN}
+      NSS_REPLICA_SUB_MODE: volume
+      NSS_REPLICA_ADVERTISE: http://replica3:9010
+    depends_on:
+      join-token-seed:
+        condition: service_completed_successfully
+      master:
+        condition: service_started
+    ports:
+      - "9006:9000"
+      - "9012:9010"
+      - "9103:9100"
+    volumes:
+      - ./.local-data/replicas/replica-3:/data
 
   observability-bootstrap:
     image: python:3.12-alpine
@@ -167,6 +193,8 @@ services:
       replica1:
         condition: service_started
       replica2:
+        condition: service_started
+      replica3:
         condition: service_started
     ports:
       - "9090:9090"
@@ -226,12 +254,16 @@ services:
     environment:
       NSS_OBS_OUTPUT_DIR: /obs
       PYTHONUNBUFFERED: "1"
+      NSS_OBS_DELIVERY_PRIMARY_URL: http://replica1:9000
+      NSS_OBS_DELIVERY_SECONDARY_URL: ""
     depends_on:
       observability-bootstrap:
         condition: service_completed_successfully
       replica1:
         condition: service_started
       replica2:
+        condition: service_started
+      replica3:
         condition: service_started
     volumes:
       - ./.local-data/observability:/obs

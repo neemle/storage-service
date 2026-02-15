@@ -12,6 +12,7 @@ scrape_configs:
           - master:9100
           - replica1:9100
           - replica2:9100
+          - replica3:9100
         labels:
           cluster: neemle-demo
 

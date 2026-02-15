@@ -92,13 +92,13 @@ def observe_replica_reads(
     bucket: str,
     key: str | None,
     replica_one,
-    replica_two,
     transient_failures: int,
+    replica_two=None,
 ) -> int:
     if key is None:
         return transient_failures
     read_one = read_replica_object(replica_one, bucket, key)
-    read_two = read_replica_object(replica_two, bucket, key)
+    read_two = True if replica_two is None else read_replica_object(replica_two, bucket, key)
     if read_one and read_two:
         return 0
     next_failures = transient_failures + 1
@@ -110,7 +110,7 @@ def observe_replica_reads(
     return next_failures
 
 
-def run_loop(bucket: str, master, replica_one, replica_two) -> None:
+def run_loop(bucket: str, master, replica_one, replica_two=None) -> None:
     counter = 0
     recent_keys: list[str] = []
     transient_failures = 0
@@ -126,14 +126,15 @@ def run_loop(bucket: str, master, replica_one, replica_two) -> None:
                 bucket,
                 read_key,
                 replica_one,
-                replica_two,
                 transient_failures,
+                replica_two,
             )
         except Exception as err:
             print(f"demo-load iteration failed: {err}")
         probe_http("http://master:9100/metrics")
         probe_http("http://replica1:9100/metrics")
         probe_http("http://replica2:9100/metrics")
+        probe_http("http://replica3:9100/metrics")
         counter += 1
         time.sleep(2)
 
@@ -144,8 +145,9 @@ def main() -> None:
     creds = load_credentials(obs_dir / "credentials.json")
 
     master = build_s3_client("http://master:9000", creds)
-    replica_one = build_s3_client("http://replica1:9000", creds)
-    replica_two = build_s3_client("http://replica2:9000", creds)
+    replica_one = build_s3_client(env("NSS_OBS_DELIVERY_PRIMARY_URL", "http://replica1:9000"), creds)
+    secondary_url = env("NSS_OBS_DELIVERY_SECONDARY_URL", "")
+    replica_two = build_s3_client(secondary_url, creds) if secondary_url else None
     ensure_bucket(master, demo_bucket)
 
     print("demo load generator running")

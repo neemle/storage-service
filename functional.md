@@ -50,7 +50,8 @@ When implementation and docs differ, this document wins.
   carries a key id, so active encryption keys can rotate without breaking reads of older chunks.
 - Migration mode can temporarily allow plaintext legacy chunk reads while new and rewritten chunks
   are persisted encrypted.
-- Observability demo topology runs one master and two replicas, with Prometheus/Loki/Grafana attached.
+- Observability demo topology runs one master and three replicas (delivery, backup, volume),
+  with Prometheus/Loki/Grafana attached.
 - Loki writes logs to a dedicated bucket in Neemle Storage Service.
 - Thanos sidecar uploads Prometheus TSDB blocks to a dedicated Neemle Storage Service bucket.
 - Node runtime model is explicit:
@@ -98,8 +99,9 @@ When implementation and docs differ, this document wins.
   - Backups
 - Embedded UI static assets include precompressed `.gz` variants generated at build time using maximum gzip
   compression and are served with `Content-Encoding: gzip` when the client advertises gzip support.
-- Dev demo `docker compose up --build` starts one master plus two connected replicas and includes
-  Prometheus, Loki, and Grafana with preprovisioned dashboards.
+- Dev demo `docker compose up --build` starts one master plus three connected replicas
+  (`slave-delivery`, `slave-backup`, `slave-volume`) and includes Prometheus, Loki, and Grafana
+  with preprovisioned dashboards.
 - Observability object storage uses separate buckets for logs and metrics blocks.
 
 ## Use Cases
@@ -374,7 +376,8 @@ Acceptance:
 
 Happy path:
 1. Operator runs `docker compose up --build` from repository root.
-2. Stack starts one master, two replicas, Prometheus, Loki, Promtail, Grafana, and demo traffic generator.
+2. Stack starts one master, three replicas (`slave-delivery`, `slave-backup`, `slave-volume`),
+   Prometheus, Loki, Promtail, Grafana, and demo traffic generator.
 3. Observability bootstrap creates dedicated buckets and credentials in Neemle Storage Service.
 4. Prometheus scrapes node metrics and exports TSDB snapshots to a storage bucket.
 5. Loki stores logs in storage bucket.
@@ -385,7 +388,7 @@ Failure modes:
 - If replica join token seeding fails, replicas do not join and distributed read demo remains unavailable.
 
 Acceptance:
-- Root compose topology includes one master and two replicas joined to the same cluster.
+- Root compose topology includes one master and three replicas joined to the same cluster.
 - Grafana has preprovisioned dashboards and data sources for Prometheus and Loki.
 - Loki logs and Prometheus TSDB blocks use distinct Neemle Storage Service buckets.
 

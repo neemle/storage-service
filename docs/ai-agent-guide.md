@@ -64,7 +64,10 @@ docker compose up --build
 - UI/API: `http://localhost:9001`
 - S3: `http://localhost:9000`
 - Metrics: `http://localhost:9100/metrics`
-- Replica S3 reads: `http://localhost:9004`, `http://localhost:9005`
+- Replica S3:
+  - `http://localhost:9004` (`slave-delivery`, read)
+  - `http://localhost:9005` (`slave-backup`, serving blocked)
+  - `http://localhost:9006` (`slave-volume`, serving blocked)
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3000`
 

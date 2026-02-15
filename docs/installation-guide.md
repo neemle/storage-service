@@ -40,7 +40,9 @@ docker compose up --build
 3) Access services:
 - Unified Console + Admin UI: `http://localhost:9001`
 - Master S3: `http://localhost:9000`
-- Replica S3 (read): `http://localhost:9004` and `http://localhost:9005`
+- Replica 1 S3 (`slave-delivery`, read): `http://localhost:9004`
+- Replica 2 S3 (`slave-backup`, serving blocked): `http://localhost:9005`
+- Replica 3 S3 (`slave-volume`, serving blocked): `http://localhost:9006`
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3000`
 - Loki: `http://localhost:3100`
@@ -61,9 +63,13 @@ aws s3 ls s3://my-bucket --endpoint-url http://localhost:9000 --region us-east-1
 
 ## Replica behavior in demo
 
-- Root compose automatically seeds join tokens and starts both replicas.
+- Root compose automatically seeds join tokens and starts three replicas.
+- Replica mode defaults in demo:
+  - `replica1`: `slave-delivery`
+  - `replica2`: `slave-backup`
+  - `replica3`: `slave-volume`
 - Writes should target master S3 (`:9000`).
-- Reads can be served by replicas (`:9004`, `:9005`) using master-issued access keys and presigned URLs.
+- Reads can be served by delivery replicas (`:9004`) using master-issued access keys and presigned URLs.
 - Slave mode can be changed remotely from master admin APIs:
   `slave-delivery|slave-backup|slave-volume` (aliases: `delivery|backup|volume`).
 - New chunk writes are encrypted at rest by default; keep plaintext-read compatibility disabled unless

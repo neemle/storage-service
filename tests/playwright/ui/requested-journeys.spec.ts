@@ -157,12 +157,25 @@ async function expectAnonymousContent(browser: Browser, url: string, expectedTex
   const anonContext = await newVideoContext(browser);
   try {
     const page = await anonContext.newPage();
-    const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
-    expect(response?.ok()).toBeTruthy();
-    await expect.poll(() => page.textContent('body')).toContain(expectedText);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const response = await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => null);
+      const text = (await page.textContent('body').catch(() => null)) ?? '';
+      if (response?.ok() && text.includes(expectedText)) {
+        return;
+      }
+      await page.waitForTimeout(500);
+    }
+    throw new Error(`anonymous content check failed for ${url}`);
   } finally {
     await anonContext.close();
   }
+}
+
+function toReplicaDeliveryUrl(url: string): string {
+  const parsed = new URL(url);
+  parsed.protocol = 'http:';
+  parsed.host = 'replica:9000';
+  return parsed.toString();
 }
 
 async function runLinkScenario(page: Page, browser: Browser, scenario: LinkScenario): Promise<void> {
@@ -270,7 +283,32 @@ test('[UC-003][UC-004][UC-011] admin creates bucket, joins replica, and sets rep
   expect(token.length).toBeGreaterThan(10);
   const row = await firstReplicaModeRow(page);
   await setReplicaMode(page, row, 'slave-backup');
+  await setReplicaMode(page, row, 'slave-volume');
   await setReplicaMode(page, row, 'slave-delivery');
+});
+
+test('[UC-004][UC-005][UC-011] delivery node serves public object links', async ({ browser }) => {
+  const adminContext = await newVideoContext(browser);
+  const adminPage = await adminContext.newPage();
+  await loginAdmin(adminPage);
+  const row = await firstReplicaModeRow(adminPage);
+  await setReplicaMode(adminPage, row, 'slave-delivery');
+  const creds = await createConsoleUser(adminPage, false);
+
+  const userContext = await newVideoContext(browser);
+  const userPage = await userContext.newPage();
+  await loginConsole(userPage, creds.username, creds.password);
+  const bucketName = `delivery-${uniqueSuffix()}`;
+  await createBucket(userPage, bucketName);
+  await setBucketPublic(userPage, bucketName, true);
+  await selectBucket(userPage, bucketName);
+  const content = `delivery-${uniqueSuffix()}`;
+  const rowItem = await uploadTextObject(userPage, `delivery-${uniqueSuffix()}.txt`, content);
+  const masterUrl = await generateObjectUrl(userPage, rowItem);
+  const replicaUrl = toReplicaDeliveryUrl(masterUrl);
+  await expectAnonymousContent(browser, replicaUrl, content);
+  await userContext.close();
+  await adminContext.close();
 });
 
 test('[UC-005] user validates private and public object links in anonymous mode', async ({ browser }) => {

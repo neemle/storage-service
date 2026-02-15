@@ -497,9 +497,21 @@ body {
   display: flex;
   flex-direction: column;
 }
-.mat-mdc-tab-body-wrapper { flex: 1; }
-.mat-mdc-tab-body { position: absolute !important; top: 0; left: 0; right: 0; bottom: 0; }
-.mat-mdc-tab-body-content { height: 100%; overflow-y: auto !important; overflow-x: hidden !important; }
+.tabs-container > .mat-mdc-tab-body-wrapper {
+  flex: 1;
+}
+.tabs-container > .mat-mdc-tab-body-wrapper > .mat-mdc-tab-body {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+.tabs-container > .mat-mdc-tab-body-wrapper > .mat-mdc-tab-body > .mat-mdc-tab-body-content {
+  height: 100%;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
 
 /* ===== Tab Panel ===== */
 .tab-panel {
