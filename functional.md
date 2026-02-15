@@ -53,11 +53,12 @@ When implementation and docs differ, this document wins.
 - Observability demo topology runs one master and two replicas, with Prometheus/Loki/Grafana attached.
 - Loki writes logs to a dedicated bucket in Neemle Storage Service.
 - Thanos sidecar uploads Prometheus TSDB blocks to a dedicated Neemle Storage Service bucket.
-- Replica runtime has a sub-mode:
-  - `delivery`: replica serves read traffic.
-  - `backup`: replica does not serve client S3 content and is used for backup-only execution.
-- Replica runtime mode and replica backup policy assignment are configured remotely from master
-  admin APIs.
+- Node runtime model is explicit:
+  - `master`: control-plane node for writes, policy management, scheduling, and cluster coordination.
+  - `slave-delivery`: read-delivery node for authenticated and presigned S3 read traffic.
+  - `slave-backup`: backup-only node that never serves client S3 content.
+  - `slave-volume`: storage-capacity node focused on replicated chunk durability and recovery workflows.
+- Slave runtime mode and slave backup policy assignment are configured remotely from master admin APIs.
 
 ## Business Rules And Invariants
 
@@ -78,9 +79,10 @@ When implementation and docs differ, this document wins.
   to the configured env value.
 - In non-dev mode (`NSS_INSECURE_DEV=false`), `NSS_ADMIN_BOOTSTRAP_PASSWORD` and
   `NSS_INTERNAL_SHARED_TOKEN` must not use insecure default values.
-- Replicas must present a valid join token to join a cluster.
-- External object writes are handled by master data-plane endpoints; replica data-plane endpoints are
-  read-only for client traffic.
+- Slaves must present a valid join token to join a cluster.
+- External object writes are handled by master data-plane endpoints.
+- `slave-delivery` data-plane endpoints are read-only for client traffic.
+- `slave-backup` and `slave-volume` reject client S3 traffic.
 - WORM buckets enforce write-once semantics for user traffic: first object creation is allowed,
   while overwrite/delete and other mutating requests are rejected.
 - Console/API CORS with credentials requires explicit allowed origins; wildcard origin is only allowed in dev mode.
@@ -88,7 +90,12 @@ When implementation and docs differ, this document wins.
 - Console UI is structured into dedicated pages/components so authentication, settings, and operational views
   can evolve independently without changing business behavior.
 - Console Admin storage section provides inline operator help hints for WORM, snapshot, backup strategy,
-  and replica mode decisions.
+  and node mode decisions.
+- Console Admin storage section is split into operator-safe parts:
+  - Nodes
+  - Buckets
+  - Snapshots
+  - Backups
 - Embedded UI static assets include precompressed `.gz` variants generated at build time using maximum gzip
   compression and are served with `Content-Encoding: gzip` when the client advertises gzip support.
 - Dev demo `docker compose up --build` starts one master plus two connected replicas and includes
@@ -283,25 +290,30 @@ Failure modes:
 Acceptance:
 - Backup runs are queryable with status, trigger, archive path, and size.
 - Backup retention configuration is enforced after successful runs.
+- Backup scope accepts `master` and `slave` (`replica` alias accepted); persisted scope remains canonical
+  (`master` or `replica`).
+- Slave-scoped backup policies are accepted only for nodes configured as `slave-backup`.
 - Admin UI can create and update backup policies without direct API calls.
 - Admin API and UI provide remote target connection testing for configured backup destinations.
 - Admin UI `Show example` loads valid external target JSON including both `s3` and `sftp` target templates.
 
-### UC-011: Replica delivery vs backup sub-mode
+### UC-011: Slave node mode control
 
 Happy path:
-1. Admin sets replica runtime sub-mode remotely from master.
-2. Replica syncs runtime mode.
-3. In `delivery` mode, replica serves authenticated/presigned reads.
-4. In `backup` mode, replica rejects client S3 traffic and can execute replica-scoped backup policies.
+1. Admin sets slave runtime mode remotely from master.
+2. Slave syncs runtime mode.
+3. In `slave-delivery` mode, node serves authenticated/presigned reads.
+4. In `slave-backup` mode, node rejects client S3 traffic and can execute slave-scoped backup policies.
+5. In `slave-volume` mode, node rejects client S3 traffic and remains focused on storage durability tasks.
 
 Failure modes:
 - Unauthorized runtime mode update is rejected.
-- Unknown sub-mode value is rejected.
+- Unknown runtime mode value is rejected.
 
 Acceptance:
 - Runtime mode changes are persisted and applied without changing business identity or auth rules.
-- Backup mode blocks client content serving on replica data-plane endpoints.
+- Non-delivery modes block client content serving on slave data-plane endpoints.
+- Slave backup scheduling is active only while local sub-mode is `backup`.
 
 ### UC-012: Federated login (OIDC/OAuth2/SAML2 bridge)
 

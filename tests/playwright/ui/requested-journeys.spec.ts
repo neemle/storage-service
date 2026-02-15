@@ -26,6 +26,11 @@ interface LinkScenario {
   makePublic: boolean;
 }
 
+async function openPrimaryTab(page: Page, tabLabel: 'Admin' | 'Buckets' | 'Keys' | 'Objects'): Promise<void> {
+  const mainTabs = page.getByRole('tablist').first();
+  await mainTabs.getByRole('tab', { name: tabLabel, exact: true }).click();
+}
+
 async function newVideoContext(browser: Browser) {
   return browser.newContext({
     recordVideo: {
@@ -82,7 +87,7 @@ async function closeSettings(page: Page): Promise<void> {
 }
 
 async function createAccessKeyPair(page: Page, label: string): Promise<KeyPair> {
-  await page.getByRole('tab', { name: 'Keys' }).click();
+  await openPrimaryTab(page, 'Keys');
   await typeSlow(page.getByLabel('Label'), label);
   await page.getByRole('button', { name: 'Create key' }).click();
   await expect(page.getByText('Access key created')).toBeVisible();
@@ -93,7 +98,7 @@ async function createAccessKeyPair(page: Page, label: string): Promise<KeyPair> 
 }
 
 async function createBucket(page: Page, bucketName: string): Promise<Locator> {
-  await page.getByRole('tab', { name: 'Buckets' }).click();
+  await openPrimaryTab(page, 'Buckets');
   const panel = page.getByRole('tabpanel', { name: 'Buckets' });
   await expect(panel).toBeVisible();
   const input = panel.getByLabel('New bucket name');
@@ -106,7 +111,7 @@ async function createBucket(page: Page, bucketName: string): Promise<Locator> {
 }
 
 async function setBucketPublic(page: Page, bucketName: string, makePublic: boolean): Promise<void> {
-  await page.getByRole('tab', { name: 'Buckets' }).click();
+  await openPrimaryTab(page, 'Buckets');
   const row = page.locator('.bucket-table .table-row', { hasText: bucketName });
   await expect(row).toBeVisible();
   const toggle = row.getByRole('switch');
@@ -117,7 +122,7 @@ async function setBucketPublic(page: Page, bucketName: string, makePublic: boole
 }
 
 async function selectBucket(page: Page, bucketName: string): Promise<void> {
-  await page.getByRole('tab', { name: 'Objects', exact: true }).click();
+  await openPrimaryTab(page, 'Objects');
   await page.getByRole('combobox', { name: 'Bucket', exact: true }).click();
   await page.getByRole('option', { name: bucketName, exact: true }).click();
   await expect(page.getByLabel('Object name (optional)')).toBeEnabled();
@@ -175,7 +180,7 @@ async function runLinkScenario(page: Page, browser: Browser, scenario: LinkScena
 }
 
 async function generateJoinToken(page: Page): Promise<string> {
-  await page.getByRole('tab', { name: 'Admin' }).click();
+  await openPrimaryTab(page, 'Admin');
   await page.getByRole('button', { name: 'Generate join token' }).click();
   await expect(page.getByText('Replica join token')).toBeVisible();
   const token = (await page.locator('.token-box').textContent())?.trim() ?? '';
@@ -186,7 +191,7 @@ async function generateJoinToken(page: Page): Promise<string> {
 }
 
 async function firstReplicaModeRow(page: Page): Promise<Locator> {
-  const section = page.getByTestId('backup-runs-section');
+  const section = page.getByTestId('node-mode-section');
   const noReplica = section.getByText('No replica nodes connected');
   if (await noReplica.isVisible().catch(() => false)) {
     throw new Error('replica node is not connected in dockerized test stack');
@@ -196,13 +201,22 @@ async function firstReplicaModeRow(page: Page): Promise<Locator> {
   return row;
 }
 
-async function setReplicaMode(page: Page, row: Locator, mode: 'backup' | 'delivery'): Promise<void> {
+async function setReplicaMode(
+  page: Page,
+  row: Locator,
+  mode: 'slave-backup' | 'slave-delivery' | 'slave-volume'
+): Promise<void> {
   const modeSelect = row.getByRole('combobox', { name: 'Mode' });
+  const currentValue = ((await modeSelect.textContent()) ?? '').trim();
+  if (currentValue === mode) {
+    return;
+  }
   const responsePromise = page.waitForResponse((response) => {
     const isPatch = response.request().method() === 'PATCH';
-    return isPatch && response.url().includes('/admin/v1/cluster/replicas/') && response.url().endsWith('/mode');
+    return isPatch && response.url().includes('/admin/v1/cluster/') && response.url().endsWith('/mode');
   });
-  await modeSelect.click();
+  await modeSelect.focus();
+  await modeSelect.press('Enter');
   await page.getByRole('option', { name: mode, exact: true }).click();
   const response = await responsePromise;
   expect(response.ok()).toBeTruthy();
@@ -255,8 +269,8 @@ test('[UC-003][UC-004][UC-011] admin creates bucket, joins replica, and sets rep
   const token = await generateJoinToken(page);
   expect(token.length).toBeGreaterThan(10);
   const row = await firstReplicaModeRow(page);
-  await setReplicaMode(page, row, 'backup');
-  await setReplicaMode(page, row, 'delivery');
+  await setReplicaMode(page, row, 'slave-backup');
+  await setReplicaMode(page, row, 'slave-delivery');
 });
 
 test('[UC-005] user validates private and public object links in anonymous mode', async ({ browser }) => {

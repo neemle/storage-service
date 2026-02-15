@@ -331,8 +331,16 @@ pub fn is_valid_backup_strategy(value: &str) -> bool {
     matches!(value, "3-2-1" | "3-2-1-1-0" | "4-3-2")
 }
 
+pub fn normalize_backup_scope(value: &str) -> Option<&'static str> {
+    match value {
+        "master" => Some("master"),
+        "replica" | "slave" => Some("replica"),
+        _ => None,
+    }
+}
+
 pub fn is_valid_backup_scope(value: &str) -> bool {
-    matches!(value, "master" | "replica")
+    normalize_backup_scope(value).is_some()
 }
 
 pub fn is_due(last_run: Option<DateTime<Utc>>, schedule_kind: &str, now: DateTime<Utc>) -> bool {
@@ -350,10 +358,16 @@ pub fn is_due(last_run: Option<DateTime<Utc>>, schedule_kind: &str, now: DateTim
 }
 
 pub fn backup_policy_matches_runner(policy: &BackupPolicy, mode: &str, node_id: Uuid) -> bool {
-    if mode == "master" {
-        return policy.scope == "master";
+    let Some(normalized_mode) = normalize_backup_scope(mode) else {
+        return false;
+    };
+    let Some(normalized_scope) = normalize_backup_scope(policy.scope.as_str()) else {
+        return false;
+    };
+    if normalized_mode == "master" {
+        return normalized_scope == "master";
     }
-    if mode != "replica" || policy.scope != "replica" {
+    if normalized_mode != "replica" || normalized_scope != "replica" {
         return false;
     }
     policy.node_id.is_none_or(|value| value == node_id)
@@ -973,10 +987,11 @@ mod tests {
         is_valid_snapshot_trigger, load_backup_bucket, load_chunk_checksum,
         load_completed_backup_run, map_http_client_build_error, map_run_lookup_error,
         map_sftp_connect_error, map_sftp_timeout_error, memory_writer_fail_guard,
-        parse_external_targets, parse_upload_method, persist_backup_archive, prune_backup_run,
-        read_snapshot_object_payload, render_tar_entries, render_tar_entries_with_writer,
-        resolve_target_url, run_backup_policy_once, run_sftp_connect, sanitize_archive_path,
-        store_backup_archive, test_external_target_connection, test_http_target, test_sftp_target,
+        normalize_backup_scope, parse_external_targets, parse_upload_method,
+        persist_backup_archive, prune_backup_run, read_snapshot_object_payload, render_tar_entries,
+        render_tar_entries_with_writer, resolve_target_url, run_backup_policy_once,
+        run_sftp_connect, sanitize_archive_path, store_backup_archive,
+        test_external_target_connection, test_http_target, test_sftp_target,
         upload_external_target, upload_external_targets, upload_http_target, write_backup_chunk,
         ArchiveFormat, ExternalBackupTarget, ExternalTargetKind, MemoryWriter,
     };
@@ -1304,7 +1319,16 @@ mod tests {
         assert!(is_valid_backup_schedule("monthly"));
         assert!(is_valid_backup_strategy("3-2-1-1-0"));
         assert!(is_valid_backup_scope("replica"));
+        assert!(is_valid_backup_scope("slave"));
         assert!(!is_valid_backup_scope("bad"));
+    }
+
+    #[test]
+    fn normalize_backup_scope_accepts_aliases() {
+        assert_eq!(normalize_backup_scope("master"), Some("master"));
+        assert_eq!(normalize_backup_scope("replica"), Some("replica"));
+        assert_eq!(normalize_backup_scope("slave"), Some("replica"));
+        assert_eq!(normalize_backup_scope("unknown"), None);
     }
 
     #[test]
@@ -1321,13 +1345,27 @@ mod tests {
         let node_id = Uuid::new_v4();
         let master = policy("master", None);
         let replica = policy("replica", Some(node_id));
+        let slave_alias = policy("slave", Some(node_id));
+        let invalid_scope = policy("invalid", Some(node_id));
         assert!(backup_policy_matches_runner(&master, "master", node_id));
         assert!(!backup_policy_matches_runner(&master, "replica", node_id));
         assert!(backup_policy_matches_runner(&replica, "replica", node_id));
+        assert!(backup_policy_matches_runner(&replica, "slave", node_id));
+        assert!(backup_policy_matches_runner(
+            &slave_alias,
+            "replica",
+            node_id
+        ));
+        assert!(!backup_policy_matches_runner(&master, "unknown", node_id));
         assert!(!backup_policy_matches_runner(
             &replica,
             "replica",
             Uuid::new_v4()
+        ));
+        assert!(!backup_policy_matches_runner(
+            &invalid_scope,
+            "replica",
+            node_id
         ));
     }
 

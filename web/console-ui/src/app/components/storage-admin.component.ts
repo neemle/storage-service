@@ -8,6 +8,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
+import { MatTabsModule } from '@angular/material/tabs';
 import type { ReplicaSubMode } from '../../types';
 import type { ConsoleViewModel } from '../view-model';
 
@@ -23,12 +24,17 @@ import type { ConsoleViewModel } from '../view-model';
     MatInputModule,
     MatListModule,
     MatSelectModule,
-    MatSlideToggleModule
+    MatSlideToggleModule,
+    MatTabsModule
   ],
   templateUrl: './storage-admin.component.html'
 })
 export class StorageAdminComponent {
   @Input({ required: true }) app!: ConsoleViewModel;
 
-  readonly replicaSubModes: ReplicaSubMode[] = ['delivery', 'backup'];
+  readonly replicaSubModes: ReadonlyArray<{ value: ReplicaSubMode; label: string }> = [
+    { value: 'delivery', label: 'slave-delivery' },
+    { value: 'backup', label: 'slave-backup' },
+    { value: 'volume', label: 'slave-volume' }
+  ];
 }

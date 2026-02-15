@@ -62,7 +62,7 @@ Notes:
 2. Select backup bucket in the WORM section and enable WORM.
 3. Configure snapshot policy for the source bucket (optional but recommended).
 4. In Backup policy:
-- Set name, scope (`master` or `replica`), source bucket, backup bucket.
+- Set name, scope (`master` or `slave`; `replica` alias is also accepted), source bucket, backup bucket.
 - Choose type (`full`, `incremental`, `differential`).
 - Choose schedule and strategy (`3-2-1`, `3-2-1-1-0`, `4-3-2`).
 - Set retention count.

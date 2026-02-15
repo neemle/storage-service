@@ -1698,8 +1698,15 @@ export class AppComponent {
     if (this.backupRetention() < 1) {
       return 'Backup retention must be at least 1';
     }
-    if (this.backupScope() === 'replica' && !this.backupNodeId().trim()) {
-      return 'Replica scope requires a replica node';
+    if (this.backupScope() === 'replica') {
+      const nodeId = this.backupNodeId().trim();
+      if (!nodeId) {
+        return 'Slave scope requires a slave node';
+      }
+      const mode = this.replicaModes().get(nodeId);
+      if (mode && mode !== 'backup') {
+        return 'Slave scope requires node in slave-backup mode';
+      }
     }
     return null;
   }

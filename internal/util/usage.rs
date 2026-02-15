@@ -10,7 +10,9 @@ OPTIONS:
         --migrate-only   Run database migrations and exit
 
 REQUIRED ENVIRONMENT VARIABLES:
-    NSS_MODE                          Operating mode: \"master\" or \"replica\"
+    NSS_MODE                          Operating mode:
+                                       \"master\" | \"replica\" | \"slave-delivery\" |
+                                       \"slave-backup\" | \"slave-volume\"
     NSS_POSTGRES_DSN                  PostgreSQL connection string
     NSS_DATA_DIRS                     Comma-separated storage directory paths
     NSS_SECRET_ENCRYPTION_KEY_BASE64  Base64-encoded 32-byte encryption key
@@ -54,7 +56,9 @@ OPTIONAL SERVICES:
 CLUSTER (replica mode):
     NSS_MASTER_URL                    Master node endpoint
     NSS_JOIN_TOKEN                    Time-limited join token
-    NSS_REPLICA_SUB_MODE              Initial replica sub-mode   [delivery]
+    NSS_REPLICA_SUB_MODE              Initial slave mode         [delivery]
+                                       Values: delivery|backup|volume
+                                       Aliases: slave-delivery|slave-backup|slave-volume
 
 OTHER:
     NSS_LOG_LEVEL                     Log level                   [info]

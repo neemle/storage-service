@@ -1,4 +1,5 @@
 use crate::storage::checksum::ChecksumAlgo;
+use crate::util::runtime::ReplicaSubMode;
 use base64::engine::general_purpose::STANDARD as Base64;
 use base64::Engine;
 use sha2::{Digest, Sha256};
@@ -137,7 +138,8 @@ impl Config {
         let listen = ListenConfig::from_env();
         let runtime = RuntimeConfig::from_env();
         let auth = AuthConfig::from_env()?;
-        let config = Self::from_parts(required, storage, listen, runtime, auth);
+        let mut config = Self::from_parts(required, storage, listen, runtime, auth);
+        config.normalize_node_mode();
         config.validate_security()?;
         Ok(config)
     }
@@ -152,9 +154,29 @@ impl Config {
         config_from_parts!(req, storage, listen, runtime, auth)
     }
 
+    fn normalize_node_mode(&mut self) {
+        let raw_mode = self.mode.trim().to_ascii_lowercase();
+        if let Some(mode) = replica_sub_mode_alias(raw_mode.as_str()) {
+            self.mode = "replica".to_string();
+            self.replica_sub_mode = mode.as_str().to_string();
+            return;
+        }
+        if raw_mode == "slave" {
+            self.mode = "replica".to_string();
+        } else if is_mode_alias(raw_mode.as_str()) {
+            self.mode = raw_mode;
+        }
+        if let Some(mode) = ReplicaSubMode::parse(self.replica_sub_mode.as_str()) {
+            self.replica_sub_mode = mode.as_str().to_string();
+        }
+    }
+
     fn validate_security(&self) -> Result<(), String> {
-        if !matches!(self.replica_sub_mode.as_str(), "delivery" | "backup") {
-            return Err("NSS_REPLICA_SUB_MODE must be delivery or backup".into());
+        if ReplicaSubMode::parse(self.replica_sub_mode.as_str()).is_none() {
+            return Err(
+                "NSS_REPLICA_SUB_MODE must be delivery|backup|volume or slave-delivery|slave-backup|slave-volume"
+                    .into(),
+            );
         }
         validate_external_auth_config(self.auth_mode, self.oidc.as_ref())?;
         if self.insecure_dev || self.mode == "test" {
@@ -192,6 +214,19 @@ impl Config {
             chunk_size = self.chunk_max_bytes;
         }
         Ok(chunk_size)
+    }
+}
+
+fn is_mode_alias(value: &str) -> bool {
+    matches!(value, "master" | "replica" | "test")
+}
+
+fn replica_sub_mode_alias(value: &str) -> Option<ReplicaSubMode> {
+    match value {
+        "delivery" | "backup" | "volume" | "slave-delivery" | "slave-backup" | "slave-volume" => {
+            ReplicaSubMode::parse(value)
+        }
+        _ => None,
     }
 }
 
@@ -960,7 +995,75 @@ mod tests {
         env_guard.set("NSS_REPLICA_SUB_MODE", "invalid");
 
         let err = Config::load().err().expect("expected error");
-        assert_eq!(err, "NSS_REPLICA_SUB_MODE must be delivery or backup");
+        assert_eq!(
+            err,
+            "NSS_REPLICA_SUB_MODE must be delivery|backup|volume or \
+slave-delivery|slave-backup|slave-volume"
+        );
+    }
+
+    #[test]
+    fn load_config_accepts_slave_mode_aliases() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let mut env_guard = EnvGuard::new();
+        let data_dir = env::temp_dir();
+        let secret_b64 = Base64.encode(vec![7u8; 32]);
+
+        set_minimum_env(&mut env_guard, &data_dir, &secret_b64);
+        env_guard.set("NSS_REPLICA_SUB_MODE", "slave-volume");
+
+        let config = Config::load().expect("load");
+        assert_eq!(config.replica_sub_mode, "volume");
+    }
+
+    #[test]
+    fn load_config_maps_slave_mode_to_replica_and_sub_mode() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let mut env_guard = EnvGuard::new();
+        let data_dir = env::temp_dir();
+        let secret_b64 = Base64.encode(vec![7u8; 32]);
+
+        set_minimum_env(&mut env_guard, &data_dir, &secret_b64);
+        env_guard.set("NSS_MODE", "slave-backup");
+        env_guard.set("NSS_REPLICA_SUB_MODE", "delivery");
+        env_guard.set("NSS_INSECURE_DEV", "true");
+
+        let config = Config::load().expect("load");
+        assert_eq!(config.mode, "replica");
+        assert_eq!(config.replica_sub_mode, "backup");
+    }
+
+    #[test]
+    fn load_config_maps_slave_mode_alias_to_replica_mode() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let mut env_guard = EnvGuard::new();
+        let data_dir = env::temp_dir();
+        let secret_b64 = Base64.encode(vec![7u8; 32]);
+
+        set_minimum_env(&mut env_guard, &data_dir, &secret_b64);
+        env_guard.set("NSS_MODE", "slave");
+        env_guard.set("NSS_INSECURE_DEV", "true");
+
+        let config = Config::load().expect("load");
+        assert_eq!(config.mode, "replica");
+        assert_eq!(config.replica_sub_mode, "delivery");
+    }
+
+    #[test]
+    fn load_config_keeps_unknown_mode_and_normalizes_replica_sub_mode() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let mut env_guard = EnvGuard::new();
+        let data_dir = env::temp_dir();
+        let secret_b64 = Base64.encode(vec![7u8; 32]);
+
+        set_minimum_env(&mut env_guard, &data_dir, &secret_b64);
+        env_guard.set("NSS_MODE", "worker");
+        env_guard.set("NSS_REPLICA_SUB_MODE", "slave-backup");
+        env_guard.set("NSS_INSECURE_DEV", "true");
+
+        let config = Config::load().expect("load");
+        assert_eq!(config.mode, "worker");
+        assert_eq!(config.replica_sub_mode, "backup");
     }
 
     #[test]

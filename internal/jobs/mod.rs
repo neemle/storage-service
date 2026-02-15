@@ -2,6 +2,7 @@ use crate::api::AppState;
 use crate::backup;
 use crate::meta::models::Node;
 use crate::storage::checksum::{Checksum, ChecksumAlgo};
+use crate::util::runtime::ReplicaSubMode;
 use chrono::Utc;
 use dashmap::DashMap;
 #[cfg(test)]
@@ -269,6 +270,9 @@ async fn execute_snapshot_policy(
 }
 
 async fn run_backup_policies_once(state: &AppState) {
+    if !backup_scheduler_enabled(state) {
+        return;
+    }
     let policies = match state.repo.list_enabled_backup_policies().await {
         Ok(policies) => policies,
         Err(_) => return,
@@ -287,6 +291,16 @@ async fn run_backup_policies_once(state: &AppState) {
         }
         let _ = backup::run_backup_policy_once(state, &policy, "schedule").await;
     }
+}
+
+fn backup_scheduler_enabled(state: &AppState) -> bool {
+    if state.config.mode == "master" {
+        return true;
+    }
+    if state.config.mode != "replica" {
+        return false;
+    }
+    state.replica_mode.get() == ReplicaSubMode::Backup
 }
 
 async fn repair_chunk(state: &AppState, chunk_id: Uuid) -> Result<(), String> {
@@ -421,9 +435,9 @@ async fn store_repair_replica(
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_snapshot_policy, gc_once, multipart_cleanup_once, repair_chunk, repair_worker_step,
-        run_backup_policies_once, run_snapshot_policies_once, scrub_once,
-        should_run_snapshot_policy, start_background_jobs, start_backup_scheduler,
+        backup_scheduler_enabled, execute_snapshot_policy, gc_once, multipart_cleanup_once,
+        repair_chunk, repair_worker_step, run_backup_policies_once, run_snapshot_policies_once,
+        scrub_once, should_run_snapshot_policy, start_background_jobs, start_backup_scheduler,
         start_snapshot_scheduler, RepairQueue, GC_RUNS, MULTIPART_CLEANUP_RUNS, SCRUB_RUNS,
     };
     use crate::api::AppState;
@@ -432,6 +446,7 @@ mod tests {
     use crate::storage::checksum::{Checksum, ChecksumAlgo};
     use crate::test_support;
     use crate::test_support::TableRenameGuard;
+    use crate::util::runtime::ReplicaSubMode;
     use axum::extract::Path;
     use axum::http::StatusCode;
     use axum::routing::{get, put};
@@ -797,6 +812,65 @@ mod tests {
             .await
             .expect("runs");
         assert!(!runs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn backup_scheduler_enabled_respects_mode_and_sub_mode() {
+        let (master, _pool, _dir) = test_support::build_state("master").await;
+        assert!(backup_scheduler_enabled(&master));
+
+        let (replica, _pool, _dir) = test_support::build_state("replica").await;
+        assert!(!backup_scheduler_enabled(&replica));
+
+        replica.replica_mode.set(ReplicaSubMode::Backup);
+        assert!(backup_scheduler_enabled(&replica));
+
+        let (mut test_mode, _pool, _dir) = test_support::build_state("master").await;
+        test_mode.config.mode = "test".to_string();
+        assert!(!backup_scheduler_enabled(&test_mode));
+    }
+
+    #[tokio::test]
+    async fn run_backup_policies_once_skips_non_backup_replica_mode() {
+        let (state, _pool, _dir) = test_support::build_state("replica").await;
+        let user = state
+            .repo
+            .create_user("replica-backup-mode-user", None, "hash", "active")
+            .await
+            .expect("user");
+        let source = state
+            .repo
+            .create_bucket("replica-backup-mode-source", user.id)
+            .await
+            .expect("source");
+        let backup = state
+            .repo
+            .create_bucket("replica-backup-mode-target", user.id)
+            .await
+            .expect("backup");
+        state
+            .repo
+            .update_bucket_worm(backup.id, true)
+            .await
+            .expect("worm");
+        let policy = create_backup_policy(&state, source.id, backup.id, "replica", "daily").await;
+
+        run_backup_policies_once(&state).await;
+        let before = state
+            .repo
+            .list_backup_runs_for_policy(policy.id)
+            .await
+            .expect("before");
+        assert!(before.is_empty());
+
+        state.replica_mode.set(ReplicaSubMode::Backup);
+        run_backup_policies_once(&state).await;
+        let after = state
+            .repo
+            .list_backup_runs_for_policy(policy.id)
+            .await
+            .expect("after");
+        assert_eq!(after.len(), 1);
     }
 
     async fn scheduler_created_snapshot(state: &AppState, bucket_id: Uuid) -> bool {

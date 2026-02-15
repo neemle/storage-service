@@ -562,7 +562,7 @@ export async function exportBackupRun(runId: string, format: 'tar' | 'tar.gz'): 
 }
 
 export async function updateReplicaMode(nodeId: string, subMode: ReplicaSubMode): Promise<ReplicaModeResponse> {
-  const data = await apiFetch(`/admin/v1/cluster/replicas/${encodeURIComponent(nodeId)}/mode`, {
+  const data = await apiFetch(`/admin/v1/cluster/nodes/${encodeURIComponent(nodeId)}/mode`, {
     method: 'PATCH',
     body: JSON.stringify({ subMode })
   });

@@ -8,7 +8,8 @@ startup and apply to the master and replica services.
 These must be set for the master:
 
 - `NSS_MODE` (required)
-  - `master` or `replica`
+  - `master`, `replica`, `slave-delivery`, `slave-backup`, or `slave-volume`
+  - Slave aliases are normalized to `replica` mode with corresponding `NSS_REPLICA_SUB_MODE`.
 - `NSS_POSTGRES_DSN` (required)
   - Example: `postgres://nss:nss@postgres:5432/nss?sslmode=disable`
 - `NSS_DATA_DIRS` (required)
@@ -58,7 +59,8 @@ For local `docker-compose.yml`, the DSN is composed from split DB settings in `.
 The repository includes `.env.dist` as the default local template. Copy it to `.env` and adjust secrets.
 
 - `NSS_MODE=master`
-  - Runtime mode for local stack (`master` or `replica`).
+  - Runtime mode for local stack.
+  - Accepted values: `master`, `replica`, `slave-delivery`, `slave-backup`, `slave-volume`.
 - `CARGO_PKG_VERSION=0.1.0`
   - Application version value surfaced by runtime and build scripts.
 - `DB_HOST=postgres`
@@ -133,7 +135,9 @@ The repository includes `.env.dist` as the default local template. Copy it to `.
 - `NSS_WRITE_QUORUM=1`
   - Minimum successful writes required to acknowledge a write.
 - `NSS_REPLICA_SUB_MODE=delivery`
-  - Initial replica runtime sub-mode (`delivery` or `backup`).
+  - Initial replica runtime mode.
+  - Accepted values: `delivery`, `backup`, `volume`.
+  - Accepted aliases: `slave-delivery`, `slave-backup`, `slave-volume`.
   - Master-admin runtime config can override this during operation.
 - `NSS_S3_MAX_TIME_SKEW_SECONDS=900`
   - Allowed timestamp skew for signed S3 requests.
@@ -239,8 +243,9 @@ Replica-only settings:
 - `NSS_MASTER_URL` (required for replicas)
 - `NSS_JOIN_TOKEN` (required for replicas)
 - `NSS_REPLICA_SUB_MODE` (optional, default `delivery`)
-  - `delivery`: replica serves authenticated/presigned reads.
-  - `backup`: replica blocks client S3 serving and runs backup-only workload.
+  - `delivery` / `slave-delivery`: replica serves authenticated/presigned reads.
+  - `backup` / `slave-backup`: replica blocks client S3 serving and runs backup-only workload.
+  - `volume` / `slave-volume`: replica blocks client S3 serving and stays storage-capacity focused.
 
 Operational notes:
 - Replication factor controls how many nodes should hold chunk replicas.

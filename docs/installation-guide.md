@@ -64,7 +64,8 @@ aws s3 ls s3://my-bucket --endpoint-url http://localhost:9000 --region us-east-1
 - Root compose automatically seeds join tokens and starts both replicas.
 - Writes should target master S3 (`:9000`).
 - Reads can be served by replicas (`:9004`, `:9005`) using master-issued access keys and presigned URLs.
-- Replica sub-mode can still be changed remotely from master admin APIs (`delivery` or `backup`).
+- Slave mode can be changed remotely from master admin APIs:
+  `slave-delivery|slave-backup|slave-volume` (aliases: `delivery|backup|volume`).
 - New chunk writes are encrypted at rest by default; keep plaintext-read compatibility disabled unless
   you are migrating legacy plaintext chunk data.
 

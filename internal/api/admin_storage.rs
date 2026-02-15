@@ -2,6 +2,7 @@ use crate::api::auth::{extract_token, verify_claims};
 use crate::api::AppState;
 use crate::backup;
 use crate::meta::backup_repos::{BackupPolicyCreate, BackupPolicyPatch};
+use crate::util::runtime::ReplicaSubMode;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -88,6 +89,7 @@ struct TestBackupTargetResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReplicaModeRequest {
+    #[serde(alias = "mode", alias = "nodeMode")]
     sub_mode: String,
 }
 
@@ -168,10 +170,15 @@ fn backup_routes() -> Router<AppState> {
 }
 
 fn replica_routes() -> Router<AppState> {
-    Router::new().route(
-        "/admin/v1/cluster/replicas/{node_id}/mode",
-        patch(update_replica_mode),
-    )
+    Router::new()
+        .route(
+            "/admin/v1/cluster/replicas/{node_id}/mode",
+            patch(update_replica_mode),
+        )
+        .route(
+            "/admin/v1/cluster/nodes/{node_id}/mode",
+            patch(update_replica_mode),
+        )
 }
 
 fn unauthorized_error() -> (StatusCode, String) {
@@ -385,15 +392,16 @@ async fn create_backup_policy(
     Json(payload): Json<CreateBackupPolicyRequest>,
 ) -> Result<Json<crate::meta::models::BackupPolicy>, (StatusCode, String)> {
     let user_id = require_admin(&state, &headers, &jar).await?;
-    validate_backup_policy_payload(&payload)?;
+    let scope = validate_backup_policy_payload(&payload)?;
     validate_external_targets(payload.external_targets.as_ref())?;
     let source_bucket = load_bucket_by_name(&state, &payload.source_bucket_name).await?;
     let backup_bucket = ensure_worm_backup_bucket(&state, &payload.backup_bucket_name).await?;
-    ensure_replica_node_exists(&state, payload.node_id).await?;
+    ensure_scope_node_exists(&state, scope, payload.node_id).await?;
     let policy = state
         .repo
         .create_backup_policy(&build_backup_policy_create(
             payload,
+            scope,
             source_bucket.id,
             backup_bucket.id,
             user_id,
@@ -417,29 +425,61 @@ async fn ensure_worm_backup_bucket(
     ))
 }
 
-async fn ensure_replica_node_exists(
+async fn ensure_scope_node_exists(
     state: &AppState,
+    scope: &str,
     node_id: Option<Uuid>,
 ) -> Result<(), (StatusCode, String)> {
-    let Some(node_id) = node_id else {
-        return Ok(());
-    };
-    let node = state.repo.get_node(node_id).await.map_err(internal_error)?;
-    if node.is_some() {
+    if scope != "replica" {
         return Ok(());
     }
-    Err((StatusCode::NOT_FOUND, "replica node not found".into()))
+    let node_id = node_id.ok_or((
+        StatusCode::BAD_REQUEST,
+        "slave scope requires nodeId".into(),
+    ))?;
+    ensure_replica_node_exists(state, node_id).await?;
+    ensure_replica_backup_mode(state, node_id).await
+}
+
+async fn ensure_replica_node_exists(
+    state: &AppState,
+    node_id: Uuid,
+) -> Result<(), (StatusCode, String)> {
+    let node = state.repo.get_node(node_id).await.map_err(internal_error)?;
+    if node.is_none() {
+        return Err((StatusCode::NOT_FOUND, "slave node not found".into()));
+    }
+    Ok(())
+}
+
+async fn ensure_replica_backup_mode(
+    state: &AppState,
+    node_id: Uuid,
+) -> Result<(), (StatusCode, String)> {
+    let mode = state
+        .repo
+        .get_replica_runtime_mode(node_id)
+        .await
+        .map_err(internal_error)?;
+    if mode.is_some_and(|entry| entry.sub_mode == "backup") {
+        return Ok(());
+    }
+    Err((
+        StatusCode::BAD_REQUEST,
+        "slave scope requires node in slave-backup mode".into(),
+    ))
 }
 
 fn build_backup_policy_create(
     payload: CreateBackupPolicyRequest,
+    scope: &str,
     source_bucket_id: Uuid,
     backup_bucket_id: Uuid,
     user_id: Uuid,
 ) -> BackupPolicyCreate {
     BackupPolicyCreate {
         name: payload.name,
-        scope: payload.scope,
+        scope: scope.to_string(),
         node_id: payload.node_id,
         source_bucket_id,
         backup_bucket_id,
@@ -455,10 +495,8 @@ fn build_backup_policy_create(
 
 fn validate_backup_policy_payload(
     payload: &CreateBackupPolicyRequest,
-) -> Result<(), (StatusCode, String)> {
-    if !backup::is_valid_backup_scope(payload.scope.as_str()) {
-        return Err((StatusCode::BAD_REQUEST, "invalid backup scope".into()));
-    }
+) -> Result<&'static str, (StatusCode, String)> {
+    let scope = normalize_backup_scope_value(payload.scope.as_str())?;
     if !backup::is_valid_backup_type(payload.backup_type.as_str()) {
         return Err((StatusCode::BAD_REQUEST, "invalid backup type".into()));
     }
@@ -474,13 +512,18 @@ fn validate_backup_policy_payload(
             "retentionCount must be >= 1".into(),
         ));
     }
-    if payload.scope == "replica" && payload.node_id.is_none() {
+    if scope == "replica" && payload.node_id.is_none() {
         return Err((
             StatusCode::BAD_REQUEST,
-            "replica scope requires nodeId".into(),
+            "slave scope requires nodeId".into(),
         ));
     }
-    Ok(())
+    Ok(scope)
+}
+
+fn normalize_backup_scope_value(raw: &str) -> Result<&'static str, (StatusCode, String)> {
+    backup::normalize_backup_scope(raw)
+        .ok_or((StatusCode::BAD_REQUEST, "invalid backup scope".into()))
 }
 
 async fn list_backup_policies(
@@ -674,6 +717,12 @@ fn resolve_export_format(
     ))
 }
 
+fn normalize_replica_sub_mode(raw: &str) -> Result<&'static str, (StatusCode, String)> {
+    ReplicaSubMode::parse(raw)
+        .map(ReplicaSubMode::as_str)
+        .ok_or((StatusCode::BAD_REQUEST, "invalid replica sub mode".into()))
+}
+
 async fn test_backup_target(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -698,12 +747,10 @@ async fn update_replica_mode(
     Json(payload): Json<ReplicaModeRequest>,
 ) -> Result<Json<ReplicaModeResponse>, (StatusCode, String)> {
     let user_id = require_admin(&state, &headers, &jar).await?;
-    if !matches!(payload.sub_mode.as_str(), "delivery" | "backup") {
-        return Err((StatusCode::BAD_REQUEST, "invalid replica sub mode".into()));
-    }
+    let normalized_mode = normalize_replica_sub_mode(payload.sub_mode.as_str())?;
     let mode = state
         .repo
-        .set_replica_runtime_mode(node_id, payload.sub_mode.as_str(), Some(user_id))
+        .set_replica_runtime_mode(node_id, normalized_mode, Some(user_id))
         .await
         .map_err(internal_error)?;
     Ok(Json(ReplicaModeResponse {
@@ -715,15 +762,15 @@ async fn update_replica_mode(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_export_response, create_backup_policy, create_snapshot, export_backup_run,
-        list_backup_policies, list_backup_runs, list_snapshot_policies, list_snapshots,
-        parse_list_query, require_admin, resolve_export_format, restore_snapshot,
-        run_backup_policy, test_backup_target, update_backup_policy, update_bucket_worm,
-        update_replica_mode, upsert_snapshot_policy, validate_backup_policy_patch,
-        validate_backup_policy_payload, validate_external_targets, CreateBackupPolicyRequest,
-        CreateSnapshotRequest, ExportQuery, ListQuery, ReplicaModeRequest, RestoreSnapshotRequest,
-        TestBackupTargetRequest, UpdateBackupPolicyRequest, UpdateBucketWormRequest,
-        UpsertSnapshotPolicyRequest,
+        build_export_response, create_backup_policy, create_snapshot, ensure_scope_node_exists,
+        export_backup_run, list_backup_policies, list_backup_runs, list_snapshot_policies,
+        list_snapshots, normalize_backup_scope_value, parse_list_query, require_admin,
+        resolve_export_format, restore_snapshot, run_backup_policy, test_backup_target,
+        update_backup_policy, update_bucket_worm, update_replica_mode, upsert_snapshot_policy,
+        validate_backup_policy_patch, validate_backup_policy_payload, validate_external_targets,
+        CreateBackupPolicyRequest, CreateSnapshotRequest, ExportQuery, ListQuery,
+        ReplicaModeRequest, RestoreSnapshotRequest, TestBackupTargetRequest,
+        UpdateBackupPolicyRequest, UpdateBucketWormRequest, UpsertSnapshotPolicyRequest,
     };
     use crate::test_support::{self, FailTriggerGuard, TableRenameGuard};
     use axum::extract::{Path, Query, State};
@@ -1417,15 +1464,54 @@ mod tests {
             )
             .await
             .expect("node");
+        state
+            .repo
+            .set_replica_runtime_mode(node_id, "backup", None)
+            .await
+            .expect("mode");
         let mut payload =
             create_policy_payload(source.name.as_str(), backup_bucket.name.as_str()).0;
-        payload.scope = "replica".to_string();
+        payload.scope = "slave".to_string();
         payload.node_id = Some(node_id);
         let Json(policy) =
             create_backup_policy(State(state), headers, CookieJar::new(), Json(payload))
                 .await
                 .expect("policy");
         assert_eq!(policy.node_id, Some(node_id));
+        assert_eq!(policy.scope, "replica");
+    }
+
+    #[tokio::test]
+    async fn create_backup_policy_rejects_non_backup_replica_mode() {
+        let (state, _pool, _dir) = test_support::build_state("master").await;
+        let headers = admin_headers(&state).await;
+        let owner = create_user(&state, "owner-node-policy-reject").await;
+        let source = create_bucket(&state, "src-node-policy-reject", owner.id, false).await;
+        let backup_bucket = create_bucket(&state, "bak-node-policy-reject", owner.id, true).await;
+        let node_id = Uuid::new_v4();
+        state
+            .repo
+            .upsert_node(
+                node_id,
+                "replica",
+                "http://replica-node-reject:9010",
+                "online",
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("node");
+
+        let mut payload =
+            create_policy_payload(source.name.as_str(), backup_bucket.name.as_str()).0;
+        payload.scope = "slave".to_string();
+        payload.node_id = Some(node_id);
+
+        let err = create_backup_policy(State(state), headers, CookieJar::new(), Json(payload))
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -1494,12 +1580,12 @@ mod tests {
             CookieJar::new(),
             Path(node_id),
             Json(ReplicaModeRequest {
-                sub_mode: "backup".to_string(),
+                sub_mode: "slave-volume".to_string(),
             }),
         )
         .await
         .expect("mode");
-        assert_eq!(mode.sub_mode, "backup");
+        assert_eq!(mode.sub_mode, "volume");
     }
 
     #[test]
@@ -1519,6 +1605,58 @@ mod tests {
             limit: Some(500),
         };
         assert!(parse_list_query(&invalid_limit).is_err());
+    }
+
+    #[tokio::test]
+    async fn ensure_scope_node_exists_skips_master_scope() {
+        let (state, _pool, _dir) = test_support::build_state("master").await;
+        let result = ensure_scope_node_exists(&state, "master", Some(Uuid::new_v4())).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn ensure_scope_node_exists_requires_node_id_for_replica_scope() {
+        let (state, _pool, _dir) = test_support::build_state("master").await;
+        let err = ensure_scope_node_exists(&state, "replica", None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn ensure_scope_node_exists_reports_runtime_lookup_error() {
+        let (state, pool, _dir) = test_support::build_state("master").await;
+        let node_id = Uuid::new_v4();
+        state
+            .repo
+            .upsert_node(
+                node_id,
+                "replica",
+                "http://runtime-lookup-error:9010",
+                "online",
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("node");
+        let guard = TableRenameGuard::rename(&pool, "replica_runtime_config")
+            .await
+            .expect("rename");
+        let err = ensure_scope_node_exists(&state, "replica", Some(node_id))
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
+        guard.restore().await.expect("restore");
+    }
+
+    #[test]
+    fn normalize_backup_scope_value_accepts_slave_alias() {
+        assert_eq!(
+            normalize_backup_scope_value("slave").expect("alias"),
+            "replica"
+        );
+        assert!(normalize_backup_scope_value("invalid").is_err());
     }
 
     #[test]
@@ -1542,6 +1680,12 @@ mod tests {
         payload.scope = "replica".to_string();
         payload.node_id = None;
         assert!(validate_backup_policy_payload(&payload).is_err());
+        payload.scope = "slave".to_string();
+        payload.node_id = Some(Uuid::new_v4());
+        assert_eq!(
+            validate_backup_policy_payload(&payload).expect("scope alias"),
+            "replica"
+        );
         let mut patch = UpdateBackupPolicyRequest {
             name: None,
             backup_type: Some("bad".to_string()),

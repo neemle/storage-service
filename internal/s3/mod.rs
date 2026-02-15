@@ -5,7 +5,6 @@ use crate::s3::chunking::drain_full_chunks;
 use crate::s3::errors::{s3_error, S3Error};
 use crate::s3::sigv4::{authenticate_request, AuthResult};
 use crate::storage::checksum::Checksum;
-use crate::util::runtime::ReplicaSubMode;
 use axum::body::{to_bytes, Body, Bytes};
 use axum::extract::{DefaultBodyLimit, OriginalUri, Path, RawQuery, State};
 use axum::http::HeaderValue;
@@ -236,7 +235,7 @@ fn ensure_replica_read_only(state: &AppState, method: &Method) -> Result<(), S3E
     if state.config.mode != "replica" {
         return Ok(());
     }
-    if state.replica_mode.get() == ReplicaSubMode::Backup {
+    if !state.replica_mode.get().allows_client_reads() {
         return Err(S3Error::AccessDenied);
     }
     if !is_client_read_method(method) {
@@ -4656,6 +4655,33 @@ mod tests {
         state
             .replica_mode
             .set(crate::util::runtime::ReplicaSubMode::Backup);
+        let err = dispatch(
+            &state,
+            &auth,
+            BucketKey {
+                bucket: bucket.name.clone(),
+                key: Some("seed.txt".to_string()),
+            },
+            Method::GET,
+            HeaderMap::new(),
+            "",
+            Body::empty(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, S3Error::AccessDenied);
+    }
+
+    #[tokio::test]
+    async fn replica_volume_mode_blocks_reads() {
+        let mut state = basic_state().await;
+        state.config.mode = "replica".to_string();
+        let (user, bucket) = create_user_and_bucket(&state, "replica-volume").await;
+        let auth = auth_for(user);
+        seed_replica_dispatch_object(&state, &bucket).await;
+        state
+            .replica_mode
+            .set(crate::util::runtime::ReplicaSubMode::Volume);
         let err = dispatch(
             &state,
             &auth,

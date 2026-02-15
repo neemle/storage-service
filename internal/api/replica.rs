@@ -33,6 +33,7 @@ struct JoinRequest {
     address_internal: String,
     capacity_bytes: i64,
     free_bytes: i64,
+    sub_mode: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,6 +61,7 @@ struct JoinContext {
     address: String,
     join_token: String,
     master: String,
+    sub_mode: String,
 }
 
 pub async fn build_servers(state: AppState) -> Result<Servers, String> {
@@ -190,6 +192,7 @@ fn join_context(state: &AppState) -> Result<JoinContext, String> {
         address,
         join_token,
         master,
+        sub_mode: state.replica_mode.get().as_str().to_string(),
     })
 }
 
@@ -198,6 +201,7 @@ async fn send_join_request(context: &JoinContext) -> Result<JoinResponse, String
         address_internal: context.address.clone(),
         capacity_bytes: 0,
         free_bytes: 0,
+        sub_mode: context.sub_mode.clone(),
     };
     let url = format!(
         "{}/internal/v1/cluster/join",

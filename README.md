@@ -222,10 +222,14 @@ cargo clippy --workspace -- -D warnings
 - Access keys created on master and presigned URLs generated on master are accepted on replica reads.
 - For presigned URL compatibility across master/replicas, expose a shared S3 public host/load balancer and
   route read traffic to replica nodes.
-- Replica runtime sub-mode supports:
-  - `delivery`: serves authenticated/presigned read traffic.
-  - `backup`: blocks client S3 serving and allows backup-only operation.
-- Replica sub-mode is remotely configurable from master admin API and synced by replica heartbeat.
+- Node runtime mode supports:
+  - `master`: write/control plane.
+  - `slave-delivery` (or `delivery`): serves authenticated/presigned read traffic.
+  - `slave-backup` (or `backup`): blocks client S3 serving and allows backup-only operation.
+  - `slave-volume` (or `volume`): blocks client S3 serving and remains storage-capacity focused.
+- `NSS_MODE` accepts `master`, `replica`, and slave aliases (`slave-delivery`, `slave-backup`,
+  `slave-volume`). Slave aliases map to replica mode plus matching sub-mode.
+- Slave mode is remotely configurable from master admin API and synced by replica heartbeat.
 - `NSS_DATA_DIRS` accepts multiple comma-separated paths (for example `/data1,/data2,/data3`).
 - Multiple data directories improve disk utilization and reduce hot-spot risk by spreading chunk writes.
 - Multi-dir layouts also simplify storage expansion by adding new mount points without changing API behavior.
@@ -330,7 +334,8 @@ NSS_OIDC_ADMIN_GROUPS=nss-admin
   - Types: `full`, `incremental`, `differential`
   - Schedules: `hourly`, `daily`, `weekly`, `monthly`, `on_demand`
   - Strategies: `3-2-1`, `3-2-1-1-0`, `4-3-2`
-  - Scope: `master` or `replica` (replica scope requires node assignment).
+  - Scope: `master` or `slave` (`replica` accepted as alias; slave scope requires node assignment and
+    `slave-backup` runtime mode on that node).
 - Backup targets:
   - Backups are written to WORM-enabled backup buckets (`is_worm=true`).
   - WORM buckets are write-once: first object create is allowed, overwrite/delete mutations are blocked.
@@ -347,7 +352,12 @@ NSS_OIDC_ADMIN_GROUPS=nss-admin
   - backup strategy selection (`3-2-1`, `3-2-1-1-0`, `4-3-2`)
   - WORM backup bucket behavior
   - snapshot/restore workflow expectations
-  - replica sub-mode operational intent (`delivery` vs `backup`)
+  - node mode operational intent (`master`, `slave-delivery`, `slave-backup`, `slave-volume`)
+- Storage protection controls are split into operator-safe parts:
+  - Nodes
+  - Buckets
+  - Snapshots
+  - Backups
 - External target JSON has a guidance note plus example loader (`Show example`) in the UI.
   - Example payload includes `s3` and `sftp` gateway target templates.
   - `tar.gz` export uses maximum gzip compression.

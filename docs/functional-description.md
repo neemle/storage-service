@@ -85,9 +85,10 @@ for operational tasks.
 - Master handles client writes; replicas handle authenticated/presigned reads for out-of-the-box distributed
   content delivery.
 - Access keys and presigned URLs issued by master are accepted by replica S3 endpoints for read requests.
-- Replica sub-mode is remotely controlled by master:
-  - `delivery`: replica serves read traffic.
-  - `backup`: replica does not serve client S3 content.
+- Slave node mode is remotely controlled by master:
+  - `slave-delivery` (`delivery`): replica serves read traffic.
+  - `slave-backup` (`backup`): replica does not serve client S3 content.
+  - `slave-volume` (`volume`): replica does not serve client S3 content and stays capacity-focused.
 - For presigned URL consistency across nodes, use one shared S3 public hostname/load balancer that fronts
   master and replica S3 endpoints.
 - Multi-node replication improves availability for object reads and durability for chunk data after

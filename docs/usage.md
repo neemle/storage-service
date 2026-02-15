@@ -57,10 +57,13 @@ Related use cases:
 How NSS solves it:
 
 - Master-issued access keys and presigned URLs are accepted by replica read paths.
-- Replica sub-mode controls behavior:
-  - `delivery`: replica serves read traffic.
-  - `backup`: replica does not serve client content and can be used for backup-only operation.
-- Replica mode is remotely controlled from master.
+- Node mode controls behavior:
+  - `master`: write/control plane.
+  - `slave-delivery` (`delivery`): replica serves read traffic.
+  - `slave-backup` (`backup`): replica does not serve client content and can be used for backup-only operation.
+  - `slave-volume` (`volume`): replica does not serve client content and remains storage-capacity focused.
+- `NSS_MODE` accepts slave aliases directly and normalizes them to replica runtime mode.
+- Slave mode is remotely controlled from master.
 
 Operational result:
 
@@ -133,6 +136,8 @@ How NSS solves it:
   - Types: `full`, `incremental`, `differential`
   - Schedules: `hourly`, `daily`, `weekly`, `monthly`, `on_demand`
   - Strategies: `3-2-1`, `3-2-1-1-0`, `4-3-2`
+  - Scope: `master` or `slave` (`replica` alias accepted)
+  - Slave scope requires selecting a node in `slave-backup` mode
   - Retention count enforcement
   - External target descriptors are validated and can be connection-tested from API/UI
 - Backup export formats: `tar`, `tar.gz` (max gzip compression for `tar.gz`)
@@ -156,8 +161,13 @@ In `Admin -> Storage protection`, NSS provides inline operator hints for:
   - `4-3-2` for higher copy depth in high-change workloads.
 - WORM behavior (first write allowed, overwrite/delete blocked).
 - Snapshot restore expectation (restore creates a new bucket).
-- Replica sub-mode intent (`delivery` for serving reads, `backup` for backup-only role).
+- Node mode intent (`slave-delivery`, `slave-backup`, `slave-volume`).
 - External targets JSON guidance (`Show example`) with `s3` and `sftp` gateway templates.
+- Storage controls are split into sections:
+  - Nodes
+  - Buckets
+  - Snapshots
+  - Backups
 
 ### Manual Backup And Restore (API)
 

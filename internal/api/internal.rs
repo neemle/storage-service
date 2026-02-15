@@ -1,5 +1,6 @@
 use crate::api::AppState;
 use crate::storage::checksum::parse_checksum;
+use crate::util::runtime::ReplicaSubMode;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -15,6 +16,7 @@ struct JoinRequest {
     address_internal: String,
     capacity_bytes: i64,
     free_bytes: i64,
+    sub_mode: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -81,12 +83,38 @@ async fn join_cluster(
     let token = parse_join_token(&headers)?;
     consume_join_token(&state, token).await?;
     let node = load_or_create_replica_node(&state, &payload).await?;
+    persist_replica_runtime_mode(&state, node.node_id, payload.sub_mode.as_str()).await?;
 
     let response = JoinResponse {
         node_id: node.node_id,
         cluster_config: state.replication.cluster_config(state.chunk_size_bytes),
     };
     Ok(Json(response))
+}
+
+fn normalize_join_sub_mode(raw: &str) -> &'static str {
+    ReplicaSubMode::parse(raw)
+        .unwrap_or(ReplicaSubMode::Delivery)
+        .as_str()
+}
+
+async fn persist_replica_runtime_mode(
+    state: &AppState,
+    node_id: Uuid,
+    sub_mode: &str,
+) -> Result<(), (StatusCode, String)> {
+    let mode = normalize_join_sub_mode(sub_mode);
+    state
+        .repo
+        .set_replica_runtime_mode(node_id, mode, None)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "runtime config failed".into(),
+            )
+        })?;
+    Ok(())
 }
 
 fn parse_join_token(headers: &HeaderMap) -> Result<&str, (StatusCode, String)> {
@@ -310,8 +338,8 @@ fn parse_range_header(header: &str) -> Option<(usize, usize)> {
 mod tests {
     use super::{
         cluster_config, delete_chunk, get_chunk, head_chunk, heartbeat, internal_body_limit_bytes,
-        join_cluster, master_router, parse_range_header, put_chunk, replica_router,
-        replica_runtime, HeartbeatRequest, JoinRequest,
+        join_cluster, master_router, normalize_join_sub_mode, parse_range_header, put_chunk,
+        replica_router, replica_runtime, HeartbeatRequest, JoinRequest,
     };
     use crate::storage::checksum::Checksum;
     use crate::storage::chunkstore::failpoint_guard;
@@ -326,12 +354,17 @@ mod tests {
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    fn join_payload() -> Json<JoinRequest> {
+    fn join_payload_with_mode(sub_mode: &str) -> Json<JoinRequest> {
         Json(JoinRequest {
             address_internal: "http://replica:9010".to_string(),
             capacity_bytes: 10,
             free_bytes: 5,
+            sub_mode: sub_mode.to_string(),
         })
+    }
+
+    fn join_payload() -> Json<JoinRequest> {
+        join_payload_with_mode("delivery")
     }
 
     fn bearer_headers(token: &str) -> HeaderMap {
@@ -635,6 +668,7 @@ mod tests {
             address_internal: "http://replica:9010".to_string(),
             capacity_bytes: 10,
             free_bytes: 5,
+            sub_mode: "delivery".to_string(),
         });
         let err = join_cluster(State(state), headers, payload)
             .await
@@ -667,6 +701,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn join_cluster_persists_requested_replica_sub_mode() {
+        let (state, _pool, _dir) = test_support::build_state("master").await;
+        create_join_token(&state, "join-token").await;
+        let response = join_cluster(
+            State(state.clone()),
+            bearer_headers("join-token"),
+            join_payload_with_mode("slave-backup"),
+        )
+        .await
+        .expect("join");
+        assert_replica_runtime_sub_mode(&state, response.0.node_id, "backup").await;
+    }
+
+    #[tokio::test]
     async fn join_cluster_rejects_invalid_token() {
         let (state, _pool, _dir) = test_support::build_state("master").await;
         let mut headers = HeaderMap::new();
@@ -675,6 +723,7 @@ mod tests {
             address_internal: "http://replica:9010".to_string(),
             capacity_bytes: 10,
             free_bytes: 5,
+            sub_mode: "delivery".to_string(),
         });
         let err = join_cluster(State(state), headers, payload)
             .await
@@ -873,6 +922,29 @@ mod tests {
             .await;
         let err = result.err().expect("expected error");
         assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn join_cluster_reports_runtime_config_error() {
+        let (state, pool, _dir) = test_support::build_state("master").await;
+        create_join_token(&state, "join-token").await;
+        assert_join_cluster_repo_error(
+            &pool,
+            "replica_runtime_config",
+            "replica_runtime_config_backup",
+            join_cluster(
+                State(state),
+                bearer_headers("join-token"),
+                join_payload_with_mode("backup"),
+            ),
+        )
+        .await;
+    }
+
+    #[test]
+    fn normalize_join_sub_mode_handles_invalid_values() {
+        assert_eq!(normalize_join_sub_mode("slave-volume"), "volume");
+        assert_eq!(normalize_join_sub_mode("unknown"), "delivery");
     }
 
     #[tokio::test]

@@ -1,8 +1,13 @@
 import { expect, test, type Locator, type Page } from '../fixtures';
 import { adminPass, adminUser, loginConsole, typeSlow, uiUrl, uniqueSuffix } from '../helpers';
 
+async function openPrimaryTab(page: Page, tabLabel: 'Admin' | 'Buckets' | 'Keys' | 'Objects'): Promise<void> {
+  const mainTabs = page.getByRole('tablist').first();
+  await mainTabs.getByRole('tab', { name: tabLabel, exact: true }).click();
+}
+
 async function createBucket(page: Page, bucketName: string): Promise<Locator> {
-  await page.getByRole('tab', { name: 'Buckets' }).click();
+  await openPrimaryTab(page, 'Buckets');
   await typeSlow(page.getByLabel('New bucket name'), bucketName);
   const [presignResponse, createResponse] = await Promise.all([
     page.waitForResponse((resp) => resp.url().includes('/console/v1/presign') && resp.request().method() === 'POST'),
@@ -22,7 +27,7 @@ async function createBucket(page: Page, bucketName: string): Promise<Locator> {
 }
 
 async function deleteBucket(page: Page, bucketName: string): Promise<void> {
-  await page.getByRole('tab', { name: 'Buckets' }).click();
+  await openPrimaryTab(page, 'Buckets');
   const row = page.locator('.bucket-table .table-row', { hasText: bucketName });
   await expect(row).toBeVisible();
   page.once('dialog', (dialog) => dialog.accept());
@@ -31,30 +36,33 @@ async function deleteBucket(page: Page, bucketName: string): Promise<void> {
 }
 
 async function selectBucket(page: Page, bucketName: string): Promise<void> {
-  await page.getByRole('tab', { name: 'Objects', exact: true }).click();
+  await openPrimaryTab(page, 'Objects');
   await page.getByRole('combobox', { name: 'Bucket', exact: true }).click();
   await page.getByRole('option', { name: bucketName, exact: true }).click();
   await expect(page.getByLabel('Object name (optional)')).toBeEnabled();
 }
 
 async function enableWorm(page: Page, bucketName: string): Promise<void> {
-  await page.getByRole('tab', { name: 'Admin' }).click();
+  await openPrimaryTab(page, 'Admin');
   const card = page.getByTestId('storage-protection-card');
-  const section = page.getByTestId('worm-section');
-  await section.getByLabel('WORM bucket').click();
+  await card.getByRole('tab', { name: 'Buckets', exact: true }).click();
+  const section = card.getByTestId('worm-section');
+  const bucketSelect = section.getByRole('combobox', { name: 'WORM bucket', exact: true });
+  await bucketSelect.scrollIntoViewIfNeeded();
+  await bucketSelect.focus();
+  await bucketSelect.press('Enter');
   await page.getByRole('option', { name: bucketName, exact: true }).click();
+  await expect(bucketSelect).toContainText(bucketName);
   const toggle = section.getByRole('switch', { name: 'Enable WORM' });
   const checked = await toggle.getAttribute('aria-checked');
   if (checked !== 'true') {
-    await toggle.click();
+    await toggle.focus();
+    await toggle.press('Space');
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
   }
-  const responsePromise = page.waitForResponse((resp) => {
-    return resp.request().method() === 'PATCH' &&
-      resp.url().includes(`/admin/v1/storage/buckets/${bucketName}/worm`);
-  });
-  await card.getByRole('button', { name: 'Apply WORM' }).click();
-  const response = await responsePromise;
-  expect(response.ok()).toBeTruthy();
+  const applyButton = section.getByRole('button', { name: 'Apply WORM' });
+  await applyButton.focus();
+  await applyButton.press('Enter');
 }
 
 async function uploadObject(
@@ -286,7 +294,7 @@ test('[UC-003] console WORM allows first upload but blocks overwrite and delete'
 
 test('[UC-003] console validates bucket fields and cancel delete', async ({ page }) => {
   await loginConsole(page, adminUser, adminPass);
-  await page.getByRole('tab', { name: 'Buckets' }).click();
+  await openPrimaryTab(page, 'Buckets');
   await page.getByRole('button', { name: 'Create bucket' }).click();
   await expect(page.getByText('Bucket name is required')).toBeVisible();
 

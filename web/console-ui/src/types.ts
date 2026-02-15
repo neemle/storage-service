@@ -106,7 +106,7 @@ export interface BackupRun {
   completed_at?: string | null;
 }
 
-export type ReplicaSubMode = 'delivery' | 'backup';
+export type ReplicaSubMode = 'delivery' | 'backup' | 'volume';
 
 export interface ReplicaModeResponse {
   node_id: string;
