@@ -205,14 +205,16 @@ fn content_type_for(path: &str) -> &'static str {
 mod tests {
     use super::{
         accepts_encoding, client_accepts_gzip, content_type_for, embedded_ui, embedded_ui_with_dir,
-        get_embedded_asset, parse_quality, router, EMBEDDED_UI,
+        get_embedded_asset, parse_quality, router,
     };
     use crate::test_support;
     use axum::body::Body;
     use axum::http::header::ACCEPT_ENCODING;
     use axum::http::{HeaderMap, HeaderValue, Method, Request};
-    use include_dir::Dir;
+    use include_dir::{include_dir, Dir};
     use tower::ServiceExt;
+
+    static TEST_GZIP_UI: Dir = include_dir!("$CARGO_MANIFEST_DIR/tests/fixtures/portal-ui-gzip");
 
     #[tokio::test]
     async fn router_builds_with_defaults() {
@@ -312,17 +314,30 @@ mod tests {
         headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("gzip"));
         let response = embedded_ui(Method::GET, "/".parse().expect("uri"), headers).await;
         assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let precompressed_index =
-            get_embedded_asset(&EMBEDDED_UI, "index.html", true).is_some_and(|asset| asset.gzipped);
         let encoding = response
             .headers()
             .get(axum::http::header::CONTENT_ENCODING)
             .and_then(|value| value.to_str().ok());
-        if precompressed_index {
-            assert_eq!(encoding, Some("gzip"));
-        } else {
-            assert_eq!(encoding, None);
-        }
+        assert!(encoding.is_none() || encoding == Some("gzip"));
+    }
+
+    #[tokio::test]
+    async fn embedded_ui_with_fixture_serves_precompressed_asset() {
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("gzip"));
+        let response = embedded_ui_with_dir(
+            &TEST_GZIP_UI,
+            Method::GET,
+            "/".parse().expect("uri"),
+            headers,
+        )
+        .await;
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let encoding = response
+            .headers()
+            .get(axum::http::header::CONTENT_ENCODING)
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(encoding, Some("gzip"));
     }
 
     #[tokio::test]
