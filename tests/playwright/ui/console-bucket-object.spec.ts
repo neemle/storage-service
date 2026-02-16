@@ -35,6 +35,20 @@ async function deleteBucket(page: Page, bucketName: string): Promise<void> {
   await expect(row).toHaveCount(0);
 }
 
+async function setBucketVersioning(
+  page: Page,
+  bucketName: string,
+  versioningStatus: 'off' | 'enabled' | 'suspended'
+): Promise<void> {
+  await openPrimaryTab(page, 'Buckets');
+  const row = page.locator('.bucket-table .table-row', { hasText: bucketName });
+  await expect(row).toBeVisible();
+  const combo = row.getByRole('combobox', { name: 'Versioning' });
+  await combo.click();
+  await page.getByRole('option', { name: versioningStatus, exact: true }).click();
+  await expect(combo).toContainText(versioningStatus);
+}
+
 async function selectBucket(page: Page, bucketName: string): Promise<void> {
   await openPrimaryTab(page, 'Objects');
   await page.getByRole('combobox', { name: 'Bucket', exact: true }).click();
@@ -74,12 +88,18 @@ async function uploadObject(
   const baseName = objectKey.split('/').filter(Boolean).pop() ?? objectKey;
   await typeSlow(page.getByLabel('Object name (optional)'), objectKey);
   const listResponse = page.waitForResponse((resp) => resp.url().includes('/objects') && resp.ok());
+  const presignResponse = page.waitForResponse((resp) => {
+    return resp.request().method() === 'POST' && resp.url().includes('/console/v1/presign');
+  });
+  const uploadResponse = page.waitForResponse((resp) => {
+    return resp.request().method() === 'PUT' && resp.url().includes(':9000');
+  });
   await page.locator('input[type=\"file\"]').setInputFiles({
     name: fileName,
     mimeType: 'text/plain',
     buffer: Buffer.from(content)
   });
-  await listResponse;
+  await Promise.all([listResponse, presignResponse, uploadResponse]);
   const row = page.locator('.file-table .table-row', { hasText: baseName });
   await expect(row).toBeVisible();
   return row;
@@ -200,6 +220,8 @@ test('[UC-003] console manages buckets', async ({ page }) => {
 
   await bucketItem.getByRole('switch').click();
   await expect(bucketItem.getByText('Public')).toBeVisible();
+  await setBucketVersioning(page, bucketName, 'enabled');
+  await setBucketVersioning(page, bucketName, 'suspended');
 
   const renamedBucket = `${bucketName}-renamed`;
   await bucketItem.getByRole('button', { name: 'Rename' }).click();

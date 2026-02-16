@@ -52,7 +52,13 @@
               }
               @if (buckets().length > 0) {
                 <div class="data-table bucket-table">
-                  <div class="table-head cols-bucket"><span>Name</span><span>Size</span><span>Access</span><span>Actions</span></div>
+                  <div class="table-head cols-bucket">
+                    <span>Name</span>
+                    <span>Size</span>
+                    <span>Access</span>
+                    <span>Versioning</span>
+                    <span>Actions</span>
+                  </div>
                   @for (bucket of buckets(); track trackBucket($index, bucket)) {
                     <div class="table-row cols-bucket" [class.renaming]="renamingBucket() === bucket.name">
                       <div class="cell cell-stack">
@@ -67,6 +73,20 @@
                         <mat-slide-toggle color="primary" [checked]="bucket.publicRead" (change)="handleTogglePublic(bucket)" [disabled]="bucketBusy()">
                           {{ bucket.publicRead ? 'Public' : 'Private' }}
                         </mat-slide-toggle>
+                      </div>
+                      <div class="cell">
+                        <mat-form-field appearance="outline" class="bucket-versioning-select">
+                          <mat-label>Versioning</mat-label>
+                          <mat-select
+                            [value]="bucket.versioningStatus"
+                            [disabled]="bucketBusy()"
+                            (selectionChange)="handleBucketVersioningChange(bucket, $event.value)"
+                          >
+                            @for (option of bucketVersioningOptions; track option) {
+                              <mat-option [value]="option">{{ option }}</mat-option>
+                            }
+                          </mat-select>
+                        </mat-form-field>
                       </div>
                       <div class="cell cell-actions">
                         <button

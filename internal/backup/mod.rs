@@ -129,6 +129,7 @@ pub enum ExternalTargetKind {
     S3,
     Glacier,
     Sftp,
+    Ssh,
     Other,
 }
 
@@ -178,6 +179,12 @@ pub async fn test_external_target_connection(
             }
             test_http_target(target).await
         }
+        ExternalTargetKind::Ssh => {
+            if target_uses_ssh_scheme(target)? {
+                return test_ssh_target(target).await;
+            }
+            test_http_target(target).await
+        }
         ExternalTargetKind::S3 | ExternalTargetKind::Glacier | ExternalTargetKind::Other => {
             test_http_target(target).await
         }
@@ -220,6 +227,13 @@ fn validate_target_scheme(
         }
         return Err("sftp target endpoint must use sftp:// or http(s):// gateway scheme".into());
     }
+    if target.kind == ExternalTargetKind::Ssh {
+        if endpoint.scheme() == "ssh" || endpoint.scheme() == "http" || endpoint.scheme() == "https"
+        {
+            return Ok(());
+        }
+        return Err("ssh target endpoint must use ssh:// or http(s):// gateway scheme".into());
+    }
     if endpoint.scheme() == "http" || endpoint.scheme() == "https" {
         return Ok(());
     }
@@ -258,6 +272,17 @@ async fn test_sftp_target(target: &ExternalBackupTarget) -> Result<String, Strin
     let address = format!("{host}:{port}");
     run_sftp_connect(target.timeout_seconds(), address).await?;
     Ok("sftp endpoint reachable".into())
+}
+
+async fn test_ssh_target(target: &ExternalBackupTarget) -> Result<String, String> {
+    let endpoint = parse_target_url(&target.endpoint)?;
+    let host = endpoint
+        .host_str()
+        .ok_or_else(|| "ssh target endpoint is missing host".to_string())?;
+    let port = endpoint.port().unwrap_or(22);
+    let address = format!("{host}:{port}");
+    run_ssh_connect(target.timeout_seconds(), address).await?;
+    Ok("ssh endpoint reachable".into())
 }
 
 async fn test_http_target(target: &ExternalBackupTarget) -> Result<String, String> {
@@ -634,6 +659,14 @@ async fn upload_external_target(
             }
             upload_http_target(target, object_key, bytes, content_type).await
         }
+        ExternalTargetKind::Ssh => {
+            if target_uses_ssh_scheme(target)? {
+                return Err(
+                    "direct ssh push is not available; use an http(s) ssh gateway endpoint".into(),
+                );
+            }
+            upload_http_target(target, object_key, bytes, content_type).await
+        }
         ExternalTargetKind::S3 | ExternalTargetKind::Glacier | ExternalTargetKind::Other => {
             upload_http_target(target, object_key, bytes, content_type).await
         }
@@ -717,6 +750,31 @@ fn map_sftp_connect_error(err: std::io::Error) -> String {
     format!("sftp connectivity check failed: {err}")
 }
 
+async fn run_ssh_connect(timeout_seconds: u64, address: String) -> Result<(), String> {
+    #[cfg(test)]
+    let connect_future = async move {
+        if backup_failpoint(2) {
+            return std::future::pending::<Result<(), std::io::Error>>().await;
+        }
+        TcpStream::connect(address).await.map(|_| ())
+    };
+    #[cfg(not(test))]
+    let connect_future = async move { TcpStream::connect(address).await.map(|_| ()) };
+
+    timeout(TokioDuration::from_secs(timeout_seconds), connect_future)
+        .await
+        .map_err(map_ssh_timeout_error)?
+        .map_err(map_ssh_connect_error)
+}
+
+fn map_ssh_timeout_error(_: tokio::time::error::Elapsed) -> String {
+    "ssh connectivity check timed out".to_string()
+}
+
+fn map_ssh_connect_error(err: std::io::Error) -> String {
+    format!("ssh connectivity check failed: {err}")
+}
+
 fn map_run_lookup_error(err: sqlx::Error) -> String {
     format!("run lookup failed: {err}")
 }
@@ -763,6 +821,11 @@ fn encode_object_key(object_key: &str) -> String {
 fn target_uses_sftp_scheme(target: &ExternalBackupTarget) -> Result<bool, String> {
     let endpoint = parse_target_url(&target.endpoint)?;
     Ok(endpoint.scheme() == "sftp")
+}
+
+fn target_uses_ssh_scheme(target: &ExternalBackupTarget) -> Result<bool, String> {
+    let endpoint = parse_target_url(&target.endpoint)?;
+    Ok(endpoint.scheme() == "ssh")
 }
 
 pub async fn apply_backup_retention(state: &AppState, policy: &BackupPolicy) -> Result<(), String> {
@@ -986,14 +1049,15 @@ mod tests {
         is_valid_backup_scope, is_valid_backup_strategy, is_valid_backup_type,
         is_valid_snapshot_trigger, load_backup_bucket, load_chunk_checksum,
         load_completed_backup_run, map_http_client_build_error, map_run_lookup_error,
-        map_sftp_connect_error, map_sftp_timeout_error, memory_writer_fail_guard,
-        normalize_backup_scope, parse_external_targets, parse_upload_method,
-        persist_backup_archive, prune_backup_run, read_snapshot_object_payload, render_tar_entries,
-        render_tar_entries_with_writer, resolve_target_url, run_backup_policy_once,
-        run_sftp_connect, sanitize_archive_path, store_backup_archive,
-        test_external_target_connection, test_http_target, test_sftp_target,
-        upload_external_target, upload_external_targets, upload_http_target, write_backup_chunk,
-        ArchiveFormat, ExternalBackupTarget, ExternalTargetKind, MemoryWriter,
+        map_sftp_connect_error, map_sftp_timeout_error, map_ssh_connect_error,
+        map_ssh_timeout_error, memory_writer_fail_guard, normalize_backup_scope,
+        parse_external_targets, parse_upload_method, persist_backup_archive, prune_backup_run,
+        read_snapshot_object_payload, render_tar_entries, render_tar_entries_with_writer,
+        resolve_target_url, run_backup_policy_once, run_sftp_connect, run_ssh_connect,
+        sanitize_archive_path, store_backup_archive, test_external_target_connection,
+        test_http_target, test_sftp_target, test_ssh_target, upload_external_target,
+        upload_external_targets, upload_http_target, write_backup_chunk, ArchiveFormat,
+        ExternalBackupTarget, ExternalTargetKind, MemoryWriter,
     };
     use crate::test_support;
     use axum::http::StatusCode;
@@ -1396,13 +1460,19 @@ mod tests {
                 "name": "archive-sftp-gateway",
                 "kind": "sftp",
                 "endpoint": "https://gateway.example.com/sftp/upload/{objectKey}"
+            },
+            {
+                "name": "archive-ssh",
+                "kind": "ssh",
+                "endpoint": "ssh://backup.example.com:22/data"
             }
         ]))
         .expect("targets");
-        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed.len(), 4);
         assert_eq!(parsed[0].kind, ExternalTargetKind::S3);
         assert_eq!(parsed[1].kind, ExternalTargetKind::Sftp);
         assert_eq!(parsed[2].kind, ExternalTargetKind::Sftp);
+        assert_eq!(parsed[3].kind, ExternalTargetKind::Ssh);
     }
 
     #[test]
@@ -1440,7 +1510,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_external_targets_rejects_empty_name_and_sftp_scheme() {
+    fn parse_external_targets_rejects_empty_name_sftp_and_ssh_scheme() {
         let empty_name = parse_external_targets(&json!([
             {
                 "name": "   ",
@@ -1460,6 +1530,15 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(bad_sftp.contains("sftp:// or http(s)://"));
+        let bad_ssh = parse_external_targets(&json!([
+            {
+                "name": "ssh",
+                "kind": "ssh",
+                "endpoint": "ftp://example.com"
+            }
+        ]))
+        .unwrap_err();
+        assert!(bad_ssh.contains("ssh:// or http(s)://"));
     }
 
     #[test]
@@ -1534,6 +1613,8 @@ mod tests {
 
         let connect_err = map_sftp_connect_error(io::Error::other("boom"));
         assert!(connect_err.contains("sftp connectivity check failed"));
+        let ssh_connect_err = map_ssh_connect_error(io::Error::other("boom"));
+        assert!(ssh_connect_err.contains("ssh connectivity check failed"));
 
         let lookup_err = map_run_lookup_error(sqlx::Error::RowNotFound);
         assert!(lookup_err.contains("run lookup failed"));
@@ -1541,15 +1622,24 @@ mod tests {
 
     #[tokio::test]
     async fn sftp_timeout_error_mapper_returns_expected_message() {
-        let elapsed = tokio::time::timeout(
+        let sftp_elapsed = tokio::time::timeout(
             std::time::Duration::from_millis(1),
             std::future::pending::<()>(),
         )
         .await
         .err()
         .expect("elapsed");
-        let mapped = map_sftp_timeout_error(elapsed);
+        let mapped = map_sftp_timeout_error(sftp_elapsed);
         assert!(mapped.contains("timed out"));
+        let ssh_elapsed = tokio::time::timeout(
+            std::time::Duration::from_millis(1),
+            std::future::pending::<()>(),
+        )
+        .await
+        .err()
+        .expect("elapsed");
+        let ssh_mapped = map_ssh_timeout_error(ssh_elapsed);
+        assert!(ssh_mapped.contains("timed out"));
     }
 
     #[test]
@@ -1598,6 +1688,14 @@ mod tests {
         .await
         .unwrap_err();
         assert!(missing_host.contains("missing host"));
+        let ssh_missing_host = test_external_target_connection(&target(
+            ExternalTargetKind::Ssh,
+            "ssh:///archive",
+            None,
+        ))
+        .await
+        .unwrap_err();
+        assert!(ssh_missing_host.contains("missing host"));
 
         let sftp_parse_error = upload_external_target(
             &target(ExternalTargetKind::Sftp, "://invalid", None),
@@ -1608,6 +1706,15 @@ mod tests {
         .await
         .unwrap_err();
         assert!(sftp_parse_error.contains("invalid remote target endpoint URL"));
+        let ssh_parse_error = upload_external_target(
+            &target(ExternalTargetKind::Ssh, "://invalid", None),
+            "archive",
+            b"payload",
+            "application/gzip",
+        )
+        .await
+        .unwrap_err();
+        assert!(ssh_parse_error.contains("invalid remote target endpoint URL"));
     }
 
     #[tokio::test]
@@ -1769,16 +1876,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connection_helpers_cover_sftp_parse_and_http_client_failpoints() {
+    async fn connection_helpers_cover_sftp_ssh_parse_and_http_client_failpoints() {
         let invalid_sftp =
             test_external_target_connection(&target(ExternalTargetKind::Sftp, "://bad", None))
                 .await
                 .unwrap_err();
         assert!(invalid_sftp.contains("invalid remote target endpoint URL"));
+        let invalid_ssh =
+            test_external_target_connection(&target(ExternalTargetKind::Ssh, "://bad", None))
+                .await
+                .unwrap_err();
+        assert!(invalid_ssh.contains("invalid remote target endpoint URL"));
         let invalid_direct = test_sftp_target(&target(ExternalTargetKind::Sftp, "://bad", None))
             .await
             .unwrap_err();
         assert!(invalid_direct.contains("invalid remote target endpoint URL"));
+        let invalid_ssh_direct = test_ssh_target(&target(ExternalTargetKind::Ssh, "://bad", None))
+            .await
+            .unwrap_err();
+        assert!(invalid_ssh_direct.contains("invalid remote target endpoint URL"));
         let _client_fail = backup_failpoint_guard(1);
         let err = test_http_target(&target(
             ExternalTargetKind::Other,
@@ -1811,6 +1927,11 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("timed out"));
+        let _timeout_fail = backup_failpoint_guard(2);
+        let ssh_err = run_ssh_connect(0, "127.0.0.1:1".to_string())
+            .await
+            .unwrap_err();
+        assert!(ssh_err.contains("timed out"));
     }
 
     #[tokio::test]
@@ -1998,7 +2119,7 @@ mod tests {
         assert!(!tgz.is_empty());
     }
 
-    async fn assert_connection_helpers_cover_disabled_and_sftp() {
+    async fn assert_connection_helpers_cover_disabled_sftp_and_ssh() {
         let disabled = ExternalBackupTarget {
             enabled: Some(false),
             ..target(
@@ -2022,6 +2143,16 @@ mod tests {
         let connectivity_error = err.contains("connectivity check failed");
         let timeout_error = err.contains("timed out");
         assert!(connectivity_error | timeout_error);
+        let ssh_err = test_external_target_connection(&target(
+            ExternalTargetKind::Ssh,
+            "ssh://127.0.0.1:1/upload",
+            None,
+        ))
+        .await
+        .unwrap_err();
+        let ssh_connectivity_error = ssh_err.contains("connectivity check failed");
+        let ssh_timeout_error = ssh_err.contains("timed out");
+        assert!(ssh_connectivity_error | ssh_timeout_error);
     }
 
     async fn assert_http_upload_server_error_path() {
@@ -2042,12 +2173,12 @@ mod tests {
     #[tokio::test]
     async fn target_connectivity_and_upload_helpers_cover_branches() {
         ensure_rustls_provider();
-        assert_connection_helpers_cover_disabled_and_sftp().await;
+        assert_connection_helpers_cover_disabled_sftp_and_ssh().await;
         assert_http_upload_server_error_path().await;
     }
 
     #[tokio::test]
-    async fn target_connectivity_covers_sftp_success_and_http_headers() {
+    async fn target_connectivity_covers_sftp_ssh_success_and_http_headers() {
         ensure_rustls_provider();
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -2066,6 +2197,23 @@ mod tests {
         assert!(message.contains("reachable"));
         let accept_result = tokio::time::timeout(std::time::Duration::from_secs(1), accept).await;
         assert!(accept_result.is_ok());
+        let ssh_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let ssh_addr = ssh_listener.local_addr().expect("addr");
+        let ssh_accept = tokio::spawn(async move {
+            let _ = ssh_listener.accept().await;
+        });
+        let ssh = target(
+            ExternalTargetKind::Ssh,
+            format!("ssh://{ssh_addr}/upload").as_str(),
+            None,
+        );
+        let ssh_message = test_external_target_connection(&ssh).await.expect("ssh");
+        assert!(ssh_message.contains("reachable"));
+        let ssh_accept_result =
+            tokio::time::timeout(std::time::Duration::from_secs(1), ssh_accept).await;
+        assert!(ssh_accept_result.is_ok());
 
         let (url, handle) = spawn_status_server(StatusCode::INTERNAL_SERVER_ERROR).await;
         let mut headers = BTreeMap::new();
@@ -2086,6 +2234,25 @@ mod tests {
         let (url, handle) = spawn_status_server(StatusCode::NO_CONTENT).await;
         let target = ExternalBackupTarget {
             kind: ExternalTargetKind::Sftp,
+            ..target(
+                ExternalTargetKind::Other,
+                format!("{url}gateway").as_str(),
+                None,
+            )
+        };
+        let message = test_external_target_connection(&target)
+            .await
+            .expect("message");
+        assert!(message.contains("http endpoint reachable"));
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn target_connectivity_ssh_kind_with_http_gateway_uses_http_probe() {
+        ensure_rustls_provider();
+        let (url, handle) = spawn_status_server(StatusCode::NO_CONTENT).await;
+        let target = ExternalBackupTarget {
+            kind: ExternalTargetKind::Ssh,
             ..target(
                 ExternalTargetKind::Other,
                 format!("{url}gateway").as_str(),
@@ -2131,13 +2298,30 @@ mod tests {
         assert!(err.contains("direct sftp push is not available"));
     }
 
+    async fn assert_direct_ssh_upload_is_rejected() {
+        let err = upload_external_target(
+            &target(
+                ExternalTargetKind::Ssh,
+                "ssh://backup.example.com/upload",
+                None,
+            ),
+            "archive",
+            b"payload",
+            "application/gzip",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("direct ssh push is not available"));
+    }
+
     #[tokio::test]
-    async fn upload_external_targets_skips_disabled_and_rejects_direct_sftp() {
+    async fn upload_external_targets_skips_disabled_and_rejects_direct_transports() {
         let policy_disabled = policy_with_disabled_external_target();
         upload_external_targets(&policy_disabled, "archive", b"payload", "application/gzip")
             .await
             .expect("disabled");
         assert_direct_sftp_upload_is_rejected().await;
+        assert_direct_ssh_upload_is_rejected().await;
     }
 
     #[tokio::test]
@@ -2157,7 +2341,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_external_target_sftp_gateway_and_other_paths() {
+    async fn upload_external_target_sftp_ssh_gateway_and_other_paths() {
         ensure_rustls_provider();
         let (url, handle) = spawn_status_server(StatusCode::NO_CONTENT).await;
         let mut headers = BTreeMap::new();
@@ -2175,6 +2359,18 @@ mod tests {
         upload_external_target(&sftp_gateway, "archive", b"payload", "application/gzip")
             .await
             .expect("gateway");
+        let ssh_gateway = ExternalBackupTarget {
+            kind: ExternalTargetKind::Ssh,
+            endpoint: url.clone(),
+            ..target(
+                ExternalTargetKind::Ssh,
+                "https://unused.invalid",
+                Some("PUT"),
+            )
+        };
+        upload_external_target(&ssh_gateway, "archive", b"payload", "application/gzip")
+            .await
+            .expect("ssh gateway");
         let other = target(ExternalTargetKind::Other, url.as_str(), Some("PUT"));
         upload_external_target(&other, "archive", b"payload", "application/gzip")
             .await
@@ -2748,6 +2944,11 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("direct sftp push"));
+        let ssh = target(ExternalTargetKind::Ssh, "ssh://example.com/archive", None);
+        let ssh_err = upload_external_target(&ssh, "a/b.txt", b"x", "text/plain")
+            .await
+            .unwrap_err();
+        assert!(ssh_err.contains("direct ssh push"));
         ok_handle.abort();
 
         let (fail_url, fail_handle) = spawn_status_server(StatusCode::BAD_GATEWAY).await;

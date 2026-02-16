@@ -3,7 +3,8 @@ set -eu
 
 RESULTS_ROOT=${NSS_TEST_RESULTS_DIR:-test-results}
 SUMMARY_FILE="${RESULTS_ROOT}/summary.txt"
-ALL_STAGES="api-unit ui-unit api-integration ui-integration cluster api-curl api-it ui-base ui-e2e runtime production"
+ALL_STAGES="api-unit ui-unit api-integration ui-integration external-auth \
+cluster api-curl api-it ui-base ui-e2e runtime production"
 ENC_STAGES="cluster api-curl api-it ui-base ui-e2e runtime production"
 
 print_supported() {
@@ -18,6 +19,7 @@ Supported test types:
   ui-integration
   ui-base
   ui-e2e
+  external-auth
   cluster
   runtime
   production
@@ -40,6 +42,7 @@ stage_command() {
     api-it) echo "./scripts/it.sh" ;;
     ui-unit) echo "./scripts/ui-unit-tests.sh" ;;
     ui-integration) echo "./scripts/ui-integration-tests.sh" ;;
+    external-auth) echo "./scripts/external-auth-tests.sh" ;;
     ui-base) echo "NSS_RESULTS_LABEL=ui-base NSS_PLAYWRIGHT_PROJECTS=base ./scripts/ui-tests.sh" ;;
     ui-e2e) echo "NSS_RESULTS_LABEL=ui-e2e NSS_PLAYWRIGHT_PROJECTS=ui ./scripts/ui-tests.sh" ;;
     cluster) echo "./scripts/cluster-tests.sh" ;;
@@ -85,7 +88,7 @@ append_token() {
     "") ;;
     all) all_requested=1 ;;
     enc) selected="$selected $ENC_STAGES" ;;
-    api-unit|api-integration|api-curl|api-it|ui-unit|ui-integration|ui-base|ui-e2e)
+    api-unit|api-integration|api-curl|api-it|ui-unit|ui-integration|ui-base|ui-e2e|external-auth)
       selected="$selected $token"
       ;;
     cluster|runtime|production|security|memcheck)

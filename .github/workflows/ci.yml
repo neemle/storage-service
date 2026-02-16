@@ -140,10 +140,29 @@ jobs:
           if-no-files-found: ignore
           path: test-results/ui-integration
 
+  stage-2a-external-auth:
+    name: Stage 2A - External Auth
+    runs-on: ubuntu-latest
+    needs: stage-2-integration
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run external auth infrastructure tests
+        run: ./scripts/external-auth-tests.sh
+
+      - name: Upload external auth artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-auth-artifacts
+          if-no-files-found: ignore
+          path: test-results/external-auth
+
   stage-2b-cluster:
     name: Stage 2B - Cluster
     runs-on: ubuntu-latest
-    needs: stage-2-integration
+    needs: stage-2a-external-auth
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

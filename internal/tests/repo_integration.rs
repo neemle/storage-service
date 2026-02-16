@@ -117,6 +117,18 @@ fn sftp_target(endpoint: &str) -> ExternalBackupTarget {
     }
 }
 
+fn ssh_target(endpoint: &str) -> ExternalBackupTarget {
+    ExternalBackupTarget {
+        name: "integration-ssh".to_string(),
+        kind: ExternalTargetKind::Ssh,
+        endpoint: endpoint.to_string(),
+        enabled: Some(true),
+        method: None,
+        headers: None,
+        timeout_seconds: Some(1),
+    }
+}
+
 async fn finalize_single_chunk_object_version(
     repo: &Repo,
     bucket_id: Uuid,
@@ -246,6 +258,13 @@ async fn test_external_sftp_target_connection_reports_connectivity() {
     let target = sftp_target("sftp://127.0.0.1:1");
     let err = test_external_target_connection(&target).await.unwrap_err();
     assert!(err.contains("sftp connectivity check"));
+}
+
+#[tokio::test]
+async fn test_external_ssh_target_connection_reports_connectivity() {
+    let target = ssh_target("ssh://127.0.0.1:1");
+    let err = test_external_target_connection(&target).await.unwrap_err();
+    assert!(err.contains("ssh connectivity check"));
 }
 
 #[tokio::test]

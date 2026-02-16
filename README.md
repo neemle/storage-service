@@ -114,6 +114,7 @@ Notes:
 ./scripts/run-tests.sh api-unit
 ./scripts/run-tests.sh api-integration
 ./scripts/run-tests.sh api-curl
+./scripts/run-tests.sh external-auth
 ./scripts/run-tests.sh enc
 ./scripts/run-tests.sh ui-base ui-e2e
 NSS_PLAYWRIGHT_PROJECTS="base ui" ./scripts/ui-tests.sh
@@ -121,7 +122,7 @@ NSS_PLAYWRIGHT_PROJECTS="base ui" ./scripts/ui-tests.sh
 
 Supported stage keys:
 - `all`, `api-unit`, `api-integration`, `api-curl`, `api-it`
-- `ui-unit`, `ui-integration`, `ui-base`, `ui-e2e`
+- `ui-unit`, `ui-integration`, `external-auth`, `ui-base`, `ui-e2e`
 - `cluster`, `runtime`, `production`, `security`, `memcheck`, `enc`
 
 ## Security Audit Policy
@@ -313,6 +314,37 @@ NSS_OIDC_GROUPS_CLAIM=realm_access.roles
 NSS_OIDC_ADMIN_GROUPS=nss-admin
 ```
 
+## External Auth Demo Stacks (Keycloak)
+
+Preconfigured stacks are under `infra-demo/` and keep the same topology as root demo compose:
+master, delivery/backup/volume replicas, observability services, and demo traffic.
+
+- `infra-demo/keycloak-oidc/docker-compose.yml`
+- `infra-demo/keycloak-oauth2/docker-compose.yml`
+- `infra-demo/keycloak-saml2/docker-compose.yml`
+
+Run one stack:
+
+```bash
+docker compose -f infra-demo/keycloak-oidc/docker-compose.yml up --build
+```
+
+Switch mode by file path (`keycloak-oauth2` or `keycloak-saml2`).
+
+Defaults:
+- Keycloak URL: `http://localhost:8080`
+- Realm: `nss`
+- Client ID: `nss-console`
+- Demo users:
+  - `admin` / `admin` (`nss-admin` role -> NSS admin)
+  - `user` / `user`
+
+Run dockerized external-auth verification for all modes:
+
+```bash
+./scripts/external-auth-tests.sh
+```
+
 ## Observability Demo Stack
 
 - Root compose includes one master, three replicas, Prometheus, Loki, Promtail, Grafana, and demo load traffic.
@@ -350,7 +382,7 @@ NSS_OIDC_ADMIN_GROUPS=nss-admin
 - Backup targets:
   - Backups are written to WORM-enabled backup buckets (`is_worm=true`).
   - WORM buckets are write-once: first object create is allowed, overwrite/delete mutations are blocked.
-  - Remote target descriptors (S3/Glacier/SFTP/other) are validated on policy create/update.
+  - Remote target descriptors (S3/Glacier/SFTP/SSH/other) are validated on policy create/update.
   - Connection tests are available:
     - API: `POST /admin/v1/storage/backup-targets/test`
     - UI: `Admin -> Storage protection -> Test remote targets`
@@ -370,7 +402,7 @@ NSS_OIDC_ADMIN_GROUPS=nss-admin
   - Snapshots
   - Backups
 - External target JSON has a guidance note plus example loader (`Show example`) in the UI.
-  - Example payload includes `s3` and `sftp` gateway target templates.
+  - Example payload includes `s3`, `sftp`, and `ssh` gateway target templates.
   - `tar.gz` export uses maximum gzip compression.
 
 ## Runtime Image Profile
@@ -409,7 +441,8 @@ Legacy globals `window.__CONSOLE_API_BASE__` and `window.__ADMIN_API_BASE__` are
 
 ## Feature Competitor Matrix
 
-This matrix is used for roadmap positioning in this repository and compares NSS against 10 common competitors.
+This matrix is used for roadmap positioning in this repository and compares NSS against
+10 common competitors, including MinIO.
 
 Compared competitors:
 - Amazon S3
@@ -418,7 +451,7 @@ Compared competitors:
 - Cloudflare R2
 - Wasabi
 - Backblaze B2
-- MinIO
+- MinIO (self-hosted object storage)
 - Ceph RGW
 - OpenStack Swift
 - DigitalOcean Spaces
@@ -438,7 +471,7 @@ Legend:
 | Dedicated delivery-node reads | Yes | Partial | No | No | No | No | No | Partial | Partial | No | No |
 | Snapshot policy + restore to new bucket | Yes | No | No | No | No | No | No | Partial | Partial | No | No |
 | Full/incremental/differential backup policies | Yes | No | No | No | No | No | No | No | No | No | No |
-| External backup targets (S3/Glacier/SFTP/other) | Yes | No | No | No | No | No | No | No | Partial | No | No |
+| External backup targets (S3/Glacier/SFTP/SSH/other) | Yes | No | No | No | No | No | No | No | Partial | No | No |
 | Internal and federated auth (OIDC/OAuth2/SAML2 bridge) | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Partial | Partial | Yes |
 | Self-hosted deployment | Yes | No | No | No | No | No | No | Yes | Yes | Yes | No |
 
@@ -456,6 +489,7 @@ Before pushing:
 - Business and use cases: `functional.md`
 - Functional overview: `docs/functional-description.md`
 - Backup and restore manual: `docs/backup-restore-manual.md`
+- External auth demo stacks: `infra-demo/README.md`
 - Installation: `docs/installation-guide.md`
 - Configuration: `docs/configuration-guide.md`
 - AI/agent onboarding: `docs/ai-agent-guide.md`

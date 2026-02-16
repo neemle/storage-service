@@ -163,6 +163,7 @@ In `Admin -> Storage protection`, NSS provides inline operator hints for:
 - Snapshot restore expectation (restore creates a new bucket).
 - Node mode intent (`slave-delivery`, `slave-backup`, `slave-volume`).
 - External targets JSON guidance (`Show example`) with `s3` and `sftp` gateway templates.
+- External targets JSON guidance (`Show example`) with `s3`, `sftp`, and `ssh` gateway templates.
 - Storage controls are split into sections:
   - Nodes
   - Buckets

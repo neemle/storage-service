@@ -588,7 +588,7 @@ body {
 .table-row:hover { background: #f8fafc; }
 
 /* Column layouts - optimized for icon buttons */
-.cols-bucket { grid-template-columns: 1fr 100px 100px 90px; }
+.cols-bucket { grid-template-columns: 1fr 100px 110px 180px 90px; }
 .cols-key { grid-template-columns: 1fr 180px 80px 90px; }
 .cols-file { grid-template-columns: 1fr 70px 90px 160px; }
 .cols-1 { grid-template-columns: 1fr; }
@@ -735,6 +735,11 @@ body {
 }
 .storage-inline-grid .mat-mdc-form-field {
   width: 100%;
+}
+
+.bucket-versioning-select {
+  width: 100%;
+  min-width: 140px;
 }
 .storage-table {
   margin-top: 8px;

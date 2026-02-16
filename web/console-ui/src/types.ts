@@ -19,10 +19,12 @@ export interface Bucket {
   id: string;
   name: string;
   createdAt: string;
-  versioningStatus: string;
+  versioningStatus: BucketVersioningStatus;
   publicRead: boolean;
   isWorm: boolean;
 }
+
+export type BucketVersioningStatus = 'off' | 'enabled' | 'suspended';
 
 export type SnapshotTrigger =
   | 'hourly'
@@ -58,7 +60,7 @@ export type BackupScope = 'master' | 'replica';
 export type BackupType = 'full' | 'incremental' | 'differential';
 export type BackupSchedule = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'on_demand';
 export type BackupStrategy = '3-2-1' | '3-2-1-1-0' | '4-3-2';
-export type ExternalBackupTargetKind = 's3' | 'glacier' | 'sftp' | 'other';
+export type ExternalBackupTargetKind = 's3' | 'glacier' | 'sftp' | 'ssh' | 'other';
 export type ExternalBackupTargetMethod = 'PUT' | 'POST';
 
 export interface ExternalBackupTarget {
@@ -109,8 +111,8 @@ export interface BackupRun {
 export type ReplicaSubMode = 'delivery' | 'backup' | 'volume';
 
 export interface ReplicaModeResponse {
-  node_id: string;
-  sub_mode: ReplicaSubMode;
+  nodeId: string;
+  subMode: ReplicaSubMode;
 }
 
 export interface BackupTargetTestResponse {

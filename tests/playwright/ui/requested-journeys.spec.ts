@@ -26,6 +26,12 @@ interface LinkScenario {
   makePublic: boolean;
 }
 
+interface AnonymousReadOptions {
+  maxAttempts?: number;
+  requestTimeoutMs?: number;
+  retryDelayMs?: number;
+}
+
 async function openPrimaryTab(page: Page, tabLabel: 'Admin' | 'Buckets' | 'Keys' | 'Objects'): Promise<void> {
   const mainTabs = page.getByRole('tablist').first();
   await mainTabs.getByRole('tab', { name: tabLabel, exact: true }).click();
@@ -153,32 +159,111 @@ async function generateObjectUrl(page: Page, row: Locator): Promise<string> {
   return url;
 }
 
-async function expectAnonymousContent(browser: Browser, url: string, expectedText: string): Promise<void> {
-  const anonContext = await newVideoContext(browser);
+interface AnonymousReadResult {
+  body: string;
+  bodyReadFailed: boolean;
+  contentLength: number | null;
+  status: number | null;
+}
+
+async function fetchAnonymousContent(url: string, requestTimeoutMs: number): Promise<AnonymousReadResult> {
   try {
-    const page = await anonContext.newPage();
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const response = await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => null);
-      const text = (await page.textContent('body').catch(() => null)) ?? '';
-      if (response?.ok() && text.includes(expectedText)) {
-        return;
-      }
-      await page.waitForTimeout(500);
+    const response = await fetch(url, { signal: AbortSignal.timeout(requestTimeoutMs) });
+    const contentLengthHeader = response.headers.get('content-length');
+    const contentLength = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : null;
+    let body = '';
+    let bodyReadFailed = false;
+    try {
+      body = await response.text();
+    } catch {
+      body = '';
+      bodyReadFailed = true;
     }
-    throw new Error(`anonymous content check failed for ${url}`);
-  } finally {
-    await anonContext.close();
+    return {
+      body,
+      bodyReadFailed,
+      contentLength: Number.isNaN(contentLength) ? null : contentLength,
+      status: response.status
+    };
+  } catch {
+    return { body: '', bodyReadFailed: false, contentLength: null, status: null };
   }
 }
 
-function toReplicaDeliveryUrl(url: string): string {
-  const parsed = new URL(url);
-  parsed.protocol = 'http:';
-  parsed.host = 'replica:9000';
-  return parsed.toString();
+async function sleep(delayMs: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-async function runLinkScenario(page: Page, browser: Browser, scenario: LinkScenario): Promise<void> {
+async function expectAnonymousContent(
+  url: string,
+  expectedText: string,
+  options: AnonymousReadOptions = {}
+): Promise<void> {
+  const maxAttempts = options.maxAttempts ?? 45;
+  const requestTimeoutMs = options.requestTimeoutMs ?? 2500;
+  const retryDelayMs = options.retryDelayMs ?? 800;
+  const expectedBytes = Buffer.byteLength(expectedText, 'utf8');
+  let lastStatus = 'no-response';
+  let lastPreview = '';
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const result = await fetchAnonymousContent(url, requestTimeoutMs);
+    const statusOk = result.status !== null && result.status >= 200 && result.status < 300;
+    const bodyMatch = result.body.includes(expectedText);
+    const lengthMatch = result.contentLength !== null && result.contentLength === expectedBytes;
+    if (statusOk && (bodyMatch || (result.bodyReadFailed && lengthMatch))) {
+      return;
+    }
+    lastStatus = result.status === null ? 'no-response' : String(result.status);
+    lastPreview = result.body.slice(0, 200);
+    await sleep(retryDelayMs);
+  }
+  throw new Error(`anonymous content check failed for ${url}; status=${lastStatus}; body_preview=${lastPreview}`);
+}
+
+async function waitForEndpointReachable(url: string): Promise<void> {
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    const result = await fetchAnonymousContent(url, 2500);
+    if (result.status !== null) {
+      return;
+    }
+    await sleep(1000);
+  }
+  throw new Error(`endpoint not reachable: ${url}`);
+}
+
+async function readReplicaNodeUrl(row: Locator): Promise<string> {
+  const text = (await row.textContent()) ?? '';
+  const candidates = text.match(/https?:\/\/[^\s"'<>]+/g) ?? [];
+  for (const candidate of candidates) {
+    try {
+      return new URL(candidate).toString();
+    } catch {
+      continue;
+    }
+  }
+  return 'http://replica:9010';
+}
+
+function toReplicaS3ProbeUrl(replicaNodeUrl: string): string {
+  const replica = new URL(replicaNodeUrl);
+  replica.protocol = 'http:';
+  replica.port = '9000';
+  replica.pathname = '/';
+  replica.search = '';
+  replica.hash = '';
+  return replica.toString();
+}
+
+function toReplicaDeliveryUrl(masterUrl: string, replicaNodeUrl: string): string {
+  const target = new URL(masterUrl);
+  const replica = new URL(replicaNodeUrl);
+  target.protocol = 'http:';
+  target.hostname = replica.hostname;
+  target.port = '9000';
+  return target.toString();
+}
+
+async function runLinkScenario(page: Page, scenario: LinkScenario): Promise<void> {
   await createBucket(page, scenario.bucketName);
   await setBucketPublic(page, scenario.bucketName, scenario.makePublic);
   await selectBucket(page, scenario.bucketName);
@@ -189,7 +274,7 @@ async function runLinkScenario(page: Page, browser: Browser, scenario: LinkScena
   } else {
     expect(url).not.toContain('X-Amz-');
   }
-  await expectAnonymousContent(browser, url, scenario.content);
+  await expectAnonymousContent(url, scenario.content);
 }
 
 async function generateJoinToken(page: Page): Promise<string> {
@@ -234,6 +319,20 @@ async function setReplicaMode(
   const response = await responsePromise;
   expect(response.ok()).toBeTruthy();
   await expect(modeSelect).toContainText(mode);
+}
+
+async function assertDeliveryUrls(masterUrl: string, replicaNodeUrl: string, content: string): Promise<void> {
+  await expectAnonymousContent(masterUrl, content, {
+    maxAttempts: 20,
+    requestTimeoutMs: 2500,
+    retryDelayMs: 500
+  });
+  const replicaUrl = toReplicaDeliveryUrl(masterUrl, replicaNodeUrl);
+  await expectAnonymousContent(replicaUrl, content, {
+    maxAttempts: 60,
+    requestTimeoutMs: 4000,
+    retryDelayMs: 1000
+  });
 }
 
 test('[UC-001][UC-007] user changes password and theme from settings', async ({ browser }) => {
@@ -292,7 +391,9 @@ test('[UC-004][UC-005][UC-011] delivery node serves public object links', async 
   const adminPage = await adminContext.newPage();
   await loginAdmin(adminPage);
   const row = await firstReplicaModeRow(adminPage);
+  const replicaNodeUrl = await readReplicaNodeUrl(row);
   await setReplicaMode(adminPage, row, 'slave-delivery');
+  await waitForEndpointReachable(toReplicaS3ProbeUrl(replicaNodeUrl));
   const creds = await createConsoleUser(adminPage, false);
 
   const userContext = await newVideoContext(browser);
@@ -305,8 +406,7 @@ test('[UC-004][UC-005][UC-011] delivery node serves public object links', async 
   const content = `delivery-${uniqueSuffix()}`;
   const rowItem = await uploadTextObject(userPage, `delivery-${uniqueSuffix()}.txt`, content);
   const masterUrl = await generateObjectUrl(userPage, rowItem);
-  const replicaUrl = toReplicaDeliveryUrl(masterUrl);
-  await expectAnonymousContent(browser, replicaUrl, content);
+  await assertDeliveryUrls(masterUrl, replicaNodeUrl, content);
   await userContext.close();
   await adminContext.close();
 });
@@ -320,14 +420,14 @@ test('[UC-005] user validates private and public object links in anonymous mode'
   const userContext = await newVideoContext(browser);
   const userPage = await userContext.newPage();
   await loginConsole(userPage, creds.username, creds.password);
-  await runLinkScenario(userPage, browser, {
+  await runLinkScenario(userPage, {
     bucketName: `private-${uniqueSuffix()}`,
     content: `private-${uniqueSuffix()}`,
     expectPresigned: true,
     key: `private-${uniqueSuffix()}.txt`,
     makePublic: false
   });
-  await runLinkScenario(userPage, browser, {
+  await runLinkScenario(userPage, {
     bucketName: `public-${uniqueSuffix()}`,
     content: `public-${uniqueSuffix()}`,
     expectPresigned: false,

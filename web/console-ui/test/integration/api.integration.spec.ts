@@ -133,6 +133,9 @@ describe('api integration', () => {
   registerLogoutTest();
   registerListObjectsTest();
   registerStorageAdminApiTests();
+  registerBucketUpdateTests();
+  registerReplicaModeApiTests();
+  registerReplicaModeAliasApiTest();
   registerBackupTargetConnectionTest();
   registerExportBackupRunTest();
   registerInvalidJsonTest();
@@ -233,6 +236,21 @@ function registerStorageAdminApiTests(): void {
   });
 }
 
+function registerBucketUpdateTests(): void {
+  test('updateBucketVersioning sends camelCase payload', async () => {
+    const calls: FetchCall[] = [];
+    const queue: MockResponse[] = [{ status: 204, body: null }];
+    globalThis.fetch = createFetchStub(calls, queue);
+
+    const api = await import('../../src/api');
+    await api.updateBucketVersioning('bucket-v1', 'enabled');
+
+    expect(calls[0].url).toBe('http://ui-api.local/console/v1/buckets/bucket-v1');
+    expect(calls[0].init?.method).toBe('PATCH');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ versioningStatus: 'enabled' });
+  });
+}
+
 function backupPolicyReply(): MockResponse {
   return {
     status: 200,
@@ -305,6 +323,61 @@ function assertStorageAdminScenario(calls: FetchCall[], result: StorageAdminScen
   expect(calls[1].url).toBe('http://ui-api.local/admin/v1/storage/snapshot-policies');
   expect(calls[2].url).toBe('http://ui-api.local/admin/v1/storage/backup-policies');
   expect(result.wormBody).toEqual({ isWorm: true });
+}
+
+function registerReplicaModeApiTests(): void {
+  test('updateReplicaMode accepts camelCase response payload', async () => {
+    const calls: FetchCall[] = [];
+    const queue: MockResponse[] = [
+      {
+        status: 200,
+        body: JSON.stringify({ nodeId: 'node-1', subMode: 'backup' })
+      }
+    ];
+    globalThis.fetch = createFetchStub(calls, queue);
+
+    const api = await import('../../src/api');
+    const result = await api.updateReplicaMode('node-1', 'backup');
+
+    expect(result).toEqual({ nodeId: 'node-1', subMode: 'backup' });
+    expect(calls[0].url).toBe('http://ui-api.local/admin/v1/cluster/nodes/node-1/mode');
+  });
+
+  test('updateReplicaMode normalizes legacy snake_case response payload', async () => {
+    const calls: FetchCall[] = [];
+    const queue: MockResponse[] = [
+      {
+        status: 200,
+        body: JSON.stringify({ node_id: 'node-2', sub_mode: 'volume' })
+      }
+    ];
+    globalThis.fetch = createFetchStub(calls, queue);
+
+    const api = await import('../../src/api');
+    const result = await api.updateReplicaMode('node-2', 'volume');
+
+    expect(result).toEqual({ nodeId: 'node-2', subMode: 'volume' });
+    expect(calls[0].url).toBe('http://ui-api.local/admin/v1/cluster/nodes/node-2/mode');
+  });
+}
+
+function registerReplicaModeAliasApiTest(): void {
+  test('updateReplicaMode accepts slave-* aliases in response payload', async () => {
+    const calls: FetchCall[] = [];
+    const queue: MockResponse[] = [
+      {
+        status: 200,
+        body: JSON.stringify({ nodeId: 'node-3', subMode: 'slave-backup' })
+      }
+    ];
+    globalThis.fetch = createFetchStub(calls, queue);
+
+    const api = await import('../../src/api');
+    const result = await api.updateReplicaMode('node-3', 'backup');
+
+    expect(result).toEqual({ nodeId: 'node-3', subMode: 'backup' });
+    expect(calls[0].url).toBe('http://ui-api.local/admin/v1/cluster/nodes/node-3/mode');
+  });
 }
 
 function registerExportBackupRunTest(): void {

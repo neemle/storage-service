@@ -717,6 +717,7 @@ struct ListObjectsQuery {
 struct UpdateBucketRequest {
     name: Option<String>,
     public_read: Option<bool>,
+    versioning_status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -842,6 +843,43 @@ async fn maybe_update_bucket_public(
     Ok(())
 }
 
+fn normalize_bucket_versioning(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "off" => Some("off"),
+        "enabled" => Some("enabled"),
+        "suspended" => Some("suspended"),
+        _ => None,
+    }
+}
+
+async fn maybe_update_bucket_versioning(
+    state: &AppState,
+    user_id: Uuid,
+    bucket: &crate::meta::models::Bucket,
+    versioning_status: Option<&str>,
+) -> Result<(), (StatusCode, String)> {
+    let Some(raw_status) = versioning_status else {
+        return Ok(());
+    };
+    let Some(status) = normalize_bucket_versioning(raw_status) else {
+        return Err((StatusCode::BAD_REQUEST, "invalid versioning status".into()));
+    };
+    state
+        .repo
+        .update_bucket_versioning(bucket.id, status)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "update failed".into()))?;
+    let _ = record_audit(
+        state,
+        Some(user_id),
+        "console.bucket.versioning",
+        "success",
+        Some(json!({ "bucket": bucket.name, "versioningStatus": status })),
+    )
+    .await;
+    Ok(())
+}
+
 async fn rename_bucket_and_audit(
     state: &AppState,
     user_id: Uuid,
@@ -902,6 +940,13 @@ async fn update_bucket(
     .await?;
     ensure_bucket_mutable(&existing)?;
     maybe_update_bucket_public(&state, claims.user_id, &existing, payload.public_read).await?;
+    maybe_update_bucket_versioning(
+        &state,
+        claims.user_id,
+        &existing,
+        payload.versioning_status.as_deref(),
+    )
+    .await?;
     maybe_rename_bucket(&state, claims.user_id, &existing, payload.name.as_deref()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1607,6 +1652,17 @@ mod tests {
         Json(UpdateBucketRequest {
             name: name.map(|value| value.to_string()),
             public_read,
+            versioning_status: None,
+        })
+    }
+
+    fn update_bucket_payload_with_versioning(
+        versioning_status: Option<&str>,
+    ) -> Json<UpdateBucketRequest> {
+        Json(UpdateBucketRequest {
+            name: None,
+            public_read: None,
+            versioning_status: versioning_status.map(|value| value.to_string()),
         })
     }
 
@@ -1661,6 +1717,20 @@ mod tests {
             display_name: Some(format!("Display {username}")),
             is_admin,
         }
+    }
+
+    #[test]
+    fn normalize_bucket_versioning_supports_all_known_statuses() {
+        assert_eq!(super::normalize_bucket_versioning("off"), Some("off"));
+        assert_eq!(
+            super::normalize_bucket_versioning("ENABLED"),
+            Some("enabled")
+        );
+        assert_eq!(
+            super::normalize_bucket_versioning(" suspended "),
+            Some("suspended")
+        );
+        assert_eq!(super::normalize_bucket_versioning("invalid"), None);
     }
 
     async fn auth_config_for_external_mode(mode: AuthMode) -> AuthConfigResponse {
@@ -3618,6 +3688,7 @@ mod tests {
         let payload = Json(UpdateBucketRequest {
             name: Some("bucket-updated".to_string()),
             public_read: Some(true),
+            versioning_status: Some("enabled".to_string()),
         });
         let status = update_bucket(
             State(state.clone()),
@@ -3631,7 +3702,31 @@ mod tests {
         assert_eq!(status, StatusCode::NO_CONTENT);
 
         let updated = state.repo.get_bucket("bucket-updated").await.expect("get");
-        assert!(updated.expect("bucket").public_read);
+        let updated = updated.expect("bucket");
+        assert!(updated.public_read);
+        assert_eq!(updated.versioning_status, "enabled");
+    }
+
+    #[tokio::test]
+    async fn update_bucket_rejects_invalid_versioning_status() {
+        let (state, _pool, _dir) = test_support::build_state("master").await;
+        let (user, token) = create_user_and_token(&state).await;
+        let headers = auth_headers(&token);
+        let bucket = state
+            .repo
+            .create_bucket("bucket-bad-versioning", user.id)
+            .await
+            .expect("bucket");
+        let err = update_bucket(
+            State(state),
+            headers,
+            CookieJar::new(),
+            Path(bucket.name),
+            update_bucket_payload_with_versioning(Some("invalid")),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
     }
 
     macro_rules! __update_object_renames_and_updates_metadata_body {
@@ -4054,6 +4149,7 @@ mod tests {
         let update = Json(UpdateBucketRequest {
             name: None,
             public_read: Some(true),
+            versioning_status: None,
         });
         let status = update_bucket(
             State(state.clone()),
@@ -4134,6 +4230,7 @@ mod tests {
         let rename = Json(UpdateBucketRequest {
             name: Some("renamed-bucket".to_string()),
             public_read: None,
+            versioning_status: None,
         });
         let status = update_bucket(
             State(state.clone()),
@@ -4193,6 +4290,7 @@ mod tests {
             let update = Json(UpdateBucketRequest {
                 name: None,
                 public_read: Some(false),
+                versioning_status: None,
             });
             let err = update_bucket(
                 State(state.clone()),
@@ -4257,6 +4355,7 @@ mod tests {
             let empty = Json(UpdateBucketRequest {
                 name: Some("   ".to_string()),
                 public_read: None,
+                versioning_status: None,
             });
             let err = update_bucket(
                 State(state.clone()),
@@ -4272,6 +4371,7 @@ mod tests {
             let conflict = Json(UpdateBucketRequest {
                 name: Some("bucket-two".to_string()),
                 public_read: None,
+                versioning_status: None,
             });
             let err = update_bucket(
                 State(state),
@@ -4496,6 +4596,7 @@ mod tests {
                 Json(UpdateBucketRequest {
                     name: None,
                     public_read: Some(true),
+                    versioning_status: None,
                 }),
             )
             .await
@@ -4510,6 +4611,22 @@ mod tests {
                 Json(UpdateBucketRequest {
                     name: Some("bucket-errors-rename".to_string()),
                     public_read: None,
+                    versioning_status: None,
+                }),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
+
+            let err = update_bucket(
+                State(state.clone()),
+                headers.clone(),
+                CookieJar::new(),
+                Path(bucket.name.clone()),
+                Json(UpdateBucketRequest {
+                    name: None,
+                    public_read: None,
+                    versioning_status: Some("enabled".to_string()),
                 }),
             )
             .await
@@ -4526,6 +4643,7 @@ mod tests {
                 Json(UpdateBucketRequest {
                     name: Some("bucket-errors-new".to_string()),
                     public_read: None,
+                    versioning_status: None,
                 }),
             )
             .await
@@ -4896,6 +5014,7 @@ mod tests {
             let same_name = Json(UpdateBucketRequest {
                 name: Some(bucket.name.clone()),
                 public_read: None,
+                versioning_status: None,
             });
             let status = update_bucket(
                 State(state),

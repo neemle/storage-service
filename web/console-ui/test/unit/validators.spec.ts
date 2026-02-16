@@ -5,11 +5,13 @@ import {
   isBackupTargetTestResponse,
   isBackupPolicyArray,
   isBackupRunArray,
+  isBucket,
   isBucketSnapshotArray,
   isBucketSnapshotPolicyArray,
   isExternalBackupTargetArray,
   isObjectDetail,
   isPresignResponse,
+  isReplicaModeResponse,
   isUser,
   isUserArray
 } from '../../src/validators';
@@ -21,7 +23,9 @@ describe('validators unit', () => {
   registerArrayTests();
   registerAuthConfigTests();
   registerStorageValidatorTests();
+  registerBucketValidatorTests();
   registerExternalTargetValidatorTests();
+  registerReplicaModeValidatorTests();
 });
 
 function registerUserTests(): void {
@@ -143,6 +147,22 @@ function registerStorageValidatorTests(): void {
   });
 }
 
+function registerBucketValidatorTests(): void {
+  test('isBucket validates known versioning states', () => {
+    const valid = {
+      id: 'b1',
+      name: 'bucket-1',
+      createdAt: '2026-02-12T00:00:00Z',
+      versioningStatus: 'enabled',
+      publicRead: false,
+      isWorm: false
+    };
+    const invalid = { ...valid, versioningStatus: 'unknown' };
+    expect(isBucket(valid)).toBe(true);
+    expect(isBucket(invalid)).toBe(false);
+  });
+}
+
 function registerExternalTargetValidatorTests(): void {
   test('external target validators accept valid payloads', () => {
     const targets = buildValidExternalTargets();
@@ -156,6 +176,20 @@ function registerExternalTargetValidatorTests(): void {
     const invalidReply = { ok: 'true', message: 'reachable' };
     expect(isExternalBackupTargetArray(invalidTargets)).toBe(false);
     expect(isBackupTargetTestResponse(invalidReply)).toBe(false);
+  });
+}
+
+function registerReplicaModeValidatorTests(): void {
+  test('isReplicaModeResponse accepts camelCase shape', () => {
+    const valid = { nodeId: 'node-1', subMode: 'backup' };
+    const invalid = { node_id: 'node-1', sub_mode: 'backup' };
+    expect(isReplicaModeResponse(valid)).toBe(true);
+    expect(isReplicaModeResponse(invalid)).toBe(false);
+  });
+
+  test('isReplicaModeResponse rejects unknown mode values', () => {
+    const invalid = { nodeId: 'node-1', subMode: 'slave-backup' };
+    expect(isReplicaModeResponse(invalid)).toBe(false);
   });
 }
 

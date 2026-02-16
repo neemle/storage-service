@@ -6,6 +6,7 @@ import type {
   BackupPolicy,
   BackupRun,
   Bucket,
+  BucketVersioningStatus,
   BucketSnapshot,
   BucketSnapshotPolicy,
   BackupSchedule,
@@ -47,7 +48,6 @@ import {
   isObjectItemArray,
   isObjectUrlResponse,
   isPresignResponse,
-  isReplicaModeResponse,
   isSecretKeyResponse,
   isUser,
   isUserArray
@@ -89,6 +89,10 @@ export interface UpdateBackupPolicyPayload {
   retentionCount?: number;
   enabled?: boolean;
   externalTargets?: ExternalBackupTarget[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function toHeaderRecord(initHeaders?: HeadersInit): Record<string, string> {
@@ -239,7 +243,10 @@ export async function listBuckets(): Promise<Bucket[]> {
   return data;
 }
 
-export async function updateBucket(bucket: string, payload: { name?: string; publicRead?: boolean }): Promise<void> {
+export async function updateBucket(
+  bucket: string,
+  payload: { name?: string; publicRead?: boolean; versioningStatus?: BucketVersioningStatus }
+): Promise<void> {
   await apiFetch(`/console/v1/buckets/${encodeURIComponent(bucket)}`, {
     method: 'PATCH',
     body: JSON.stringify(payload)
@@ -252,6 +259,13 @@ export async function renameBucket(bucket: string, name: string): Promise<void> 
 
 export async function updateBucketPublic(bucket: string, publicRead: boolean): Promise<void> {
   await updateBucket(bucket, { publicRead });
+}
+
+export async function updateBucketVersioning(
+  bucket: string,
+  versioningStatus: BucketVersioningStatus
+): Promise<void> {
+  await updateBucket(bucket, { versioningStatus });
 }
 
 export async function listObjects(bucket: string, prefix?: string): Promise<ObjectItem[]> {
@@ -566,8 +580,42 @@ export async function updateReplicaMode(nodeId: string, subMode: ReplicaSubMode)
     method: 'PATCH',
     body: JSON.stringify({ subMode })
   });
-  if (!isReplicaModeResponse(data)) {
+  const parsed = parseReplicaModeResponse(data);
+  if (!parsed) {
     throw new Error('Invalid replica mode response');
   }
-  return data;
+  return parsed;
+}
+
+function parseReplicaModeResponse(data: unknown): ReplicaModeResponse | null {
+  if (!isRecord(data)) {
+    return null;
+  }
+  const nodeId = pickString(data, 'nodeId', 'node_id');
+  const subModeRaw = pickString(data, 'subMode', 'sub_mode');
+  const subMode = parseReplicaSubMode(subModeRaw);
+  if (!nodeId || !subMode) {
+    return null;
+  }
+  return { nodeId, subMode };
+}
+
+function pickString(record: Record<string, unknown>, primary: string, fallback: string): string | null {
+  const first = record[primary];
+  if (typeof first === 'string') {
+    return first;
+  }
+  const second = record[fallback];
+  return typeof second === 'string' ? second : null;
+}
+
+function parseReplicaSubMode(value: string | null): ReplicaSubMode | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.startsWith('slave-') ? value.slice('slave-'.length) : value;
+  if (normalized === 'delivery' || normalized === 'backup' || normalized === 'volume') {
+    return normalized;
+  }
+  return null;
 }

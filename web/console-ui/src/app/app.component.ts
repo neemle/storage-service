@@ -44,6 +44,7 @@ import {
   updateAccessKey,
   updateBackupPolicy,
   updateBucketPublic,
+  updateBucketVersioning,
   updateBucketWorm,
   updateObjectMetadata,
   updateReplicaMode,
@@ -66,6 +67,7 @@ import type {
   BackupStrategy,
   BackupType,
   Bucket,
+  BucketVersioningStatus,
   BucketSnapshot,
   BucketSnapshotPolicy,
   BucketStats,
@@ -89,6 +91,7 @@ const SNAPSHOT_TRIGGERS: SnapshotTrigger[] = ['hourly', 'daily', 'weekly', 'mont
 const BACKUP_TYPES: BackupType[] = ['full', 'incremental', 'differential'];
 const BACKUP_SCHEDULES: BackupSchedule[] = ['hourly', 'daily', 'weekly', 'monthly', 'on_demand'];
 const BACKUP_STRATEGIES: BackupStrategy[] = ['3-2-1', '3-2-1-1-0', '4-3-2'];
+const BUCKET_VERSIONING_OPTIONS: BucketVersioningStatus[] = ['off', 'enabled', 'suspended'];
 
 interface AppSettings {
   theme: ThemeMode;
@@ -212,6 +215,7 @@ export class AppComponent {
   readonly backupTypeOptions = BACKUP_TYPES;
   readonly backupScheduleOptions = BACKUP_SCHEDULES;
   readonly backupStrategyOptions = BACKUP_STRATEGIES;
+  readonly bucketVersioningOptions = BUCKET_VERSIONING_OPTIONS;
   readonly backupExternalTargetsExample = JSON.stringify(
     [
       {
@@ -229,6 +233,17 @@ export class AppComponent {
         name: 'archive-sftp-gateway',
         kind: 'sftp',
         endpoint: 'https://gateway.example.com/sftp/upload/{objectKey}',
+        method: 'PUT',
+        enabled: true,
+        timeoutSeconds: 20,
+        headers: {
+          Authorization: 'Bearer <token>'
+        }
+      },
+      {
+        name: 'archive-ssh-gateway',
+        kind: 'ssh',
+        endpoint: 'https://gateway.example.com/ssh/upload/{objectKey}',
         method: 'PUT',
         enabled: true,
         timeoutSeconds: 20,
@@ -1034,7 +1049,7 @@ export class AppComponent {
       const updated = await updateReplicaMode(node.nodeId, mode);
       this.replicaModes.update((map) => {
         const copy = new Map(map);
-        copy.set(updated.node_id, updated.sub_mode);
+        copy.set(updated.nodeId, updated.subMode);
         return copy;
       });
     } catch (err) {
@@ -1142,6 +1157,35 @@ export class AppComponent {
     }
   }
 
+  async handleBucketVersioningChange(
+    bucket: Bucket,
+    versioningStatus: BucketVersioningStatus
+  ): Promise<void> {
+    if (bucket.versioningStatus === versioningStatus) {
+      return;
+    }
+    this.buckets.set(
+      this.buckets().map((entry) =>
+        entry.id === bucket.id ? { ...entry, versioningStatus } : entry
+      )
+    );
+    this.bucketBusy.set(true);
+    this.error.set('');
+    try {
+      await updateBucketVersioning(bucket.name, versioningStatus);
+      await this.refresh();
+    } catch (err) {
+      this.error.set(this.getErrorMessage(err));
+      this.buckets.set(
+        this.buckets().map((entry) =>
+          entry.id === bucket.id ? { ...entry, versioningStatus: bucket.versioningStatus } : entry
+        )
+      );
+    } finally {
+      this.bucketBusy.set(false);
+    }
+  }
+
   async handleDeleteBucket(bucketName: string): Promise<void> {
     const ok = window.confirm(`Delete bucket ${bucketName}?`);
     if (!ok) {
@@ -1206,7 +1250,11 @@ export class AppComponent {
       const baseKey = desiredKey || file.name;
       const finalKey = baseKey.includes('/') ? baseKey : `${this.currentPrefix()}${baseKey}`;
       const presign = await presignUrl('PUT', this.selectedBucket(), finalKey);
-      const response = await fetch(presign.url, { method: 'PUT', body: file });
+      const response = await fetch(presign.url, {
+        method: 'PUT',
+        headers: presign.headers ?? undefined,
+        body: file
+      });
       if (!response.ok) {
         const text = await response.text();
         throw new Error(text || `Upload failed: ${response.status}`);
@@ -1245,7 +1293,7 @@ export class AppComponent {
     this.error.set('');
     try {
       const presign = await presignUrl('DELETE', this.selectedBucket(), key);
-      const response = await fetch(presign.url, { method: 'DELETE' });
+      const response = await fetch(presign.url, { method: 'DELETE', headers: presign.headers ?? undefined });
       if (!response.ok) {
         const text = await response.text();
         throw new Error(text || `Delete failed: ${response.status}`);
@@ -1798,7 +1846,9 @@ export class AppComponent {
   }
 
   private parseExternalTargetKind(value: unknown): ExternalBackupTarget['kind'] | null {
-    if (value === 's3' || value === 'glacier' || value === 'sftp' || value === 'other') {
+    const isKnownKind =
+      value === 's3' || value === 'glacier' || value === 'sftp' || value === 'ssh' || value === 'other';
+    if (isKnownKind) {
       return value;
     }
     return null;

@@ -47,13 +47,26 @@ Use these in `Admin -> Storage protection -> External targets JSON` or in the ba
     "headers": {
       "Authorization": "Bearer <token>"
     }
+  },
+  {
+    "name": "archive-ssh-gateway",
+    "kind": "ssh",
+    "endpoint": "https://gateway.example.com/ssh/upload/{objectKey}",
+    "method": "PUT",
+    "enabled": true,
+    "timeoutSeconds": 20,
+    "headers": {
+      "Authorization": "Bearer <token>"
+    }
   }
 ]
 ```
 
 Notes:
 - `kind: "sftp"` supports connectivity checks with `sftp://` endpoints.
+- `kind: "ssh"` supports connectivity checks with `ssh://` endpoints.
 - For backup upload, use an HTTP(S) SFTP gateway endpoint (`https://...`) rather than direct `sftp://`.
+- For SSH uploads, use an HTTP(S) SSH gateway endpoint (`https://...`) rather than direct `ssh://`.
 - Endpoint supports `{objectKey}` placeholder.
 
 ## UI Runbook (Operator Flow)
@@ -128,6 +141,13 @@ POLICY_ID=$(curl -s -X POST "${BASE_URL}/admin/v1/storage/backup-policies" \
         \"name\":\"archive-sftp-gateway\",
         \"kind\":\"sftp\",
         \"endpoint\":\"https://gateway.example.com/sftp/upload/{objectKey}\",
+        \"method\":\"PUT\",
+        \"enabled\":true
+      },
+      {
+        \"name\":\"archive-ssh-gateway\",
+        \"kind\":\"ssh\",
+        \"endpoint\":\"https://gateway.example.com/ssh/upload/{objectKey}\",
         \"method\":\"PUT\",
         \"enabled\":true
       }

@@ -37,6 +37,10 @@ function isNumber(value: unknown): value is number {
   return typeof value === 'number' && !Number.isNaN(value);
 }
 
+function isBucketVersioningStatus(value: unknown): value is 'off' | 'enabled' | 'suspended' {
+  return value === 'off' || value === 'enabled' || value === 'suspended';
+}
+
 function isNullableString(value: unknown): value is string | null | undefined {
   return value === null || value === undefined || typeof value === 'string';
 }
@@ -91,7 +95,7 @@ export function isBucket(value: unknown): value is Bucket {
     isString(value['id']) &&
     isString(value['name']) &&
     isString(value['createdAt']) &&
-    isString(value['versioningStatus']) &&
+    isBucketVersioningStatus(value['versioningStatus']) &&
     isBoolean(value['publicRead']) &&
     isBoolean(value['isWorm'])
   );
@@ -203,7 +207,11 @@ export function isReplicaModeResponse(value: unknown): value is ReplicaModeRespo
   if (!isRecord(value)) {
     return false;
   }
-  return isString(value['node_id']) && isString(value['sub_mode']);
+  return isString(value['nodeId']) && isReplicaSubMode(value['subMode']);
+}
+
+function isReplicaSubMode(value: unknown): value is 'delivery' | 'backup' | 'volume' {
+  return value === 'delivery' || value === 'backup' || value === 'volume';
 }
 
 export function isObjectItem(value: unknown): value is ObjectItem {

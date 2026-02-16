@@ -1,0 +1,98 @@
+{
+  "realm": "nss",
+  "enabled": true,
+  "displayName": "Neemle Storage Service",
+  "roles": {
+    "realm": [
+      {
+        "name": "nss-admin"
+      },
+      {
+        "name": "nss-user"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "nss-console",
+      "name": "NSS Console",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "http://localhost:9001/console/v1/oidc/callback",
+        "http://master:9001/console/v1/oidc/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:9001",
+        "http://master:9001"
+      ],
+      "defaultClientScopes": [
+        "openid",
+        "profile",
+        "email",
+        "roles"
+      ],
+      "optionalClientScopes": [
+        "offline_access",
+        "microprofile-jwt"
+      ],
+      "protocolMappers": [
+        {
+          "name": "realm-roles-for-id-token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "NSS",
+      "lastName": "Admin",
+      "email": "admin@nss.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "nss-admin"
+      ]
+    },
+    {
+      "username": "user",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "NSS",
+      "lastName": "User",
+      "email": "user@nss.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "user",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "nss-user"
+      ]
+    }
+  ]
+}
