@@ -139,6 +139,7 @@ describe('api integration', () => {
   registerReplicaModeApiTests();
   registerReplicaModeAliasApiTest();
   registerBackupTargetConnectionTest();
+  registerBackupTargetS3CredentialTest();
   registerExportBackupRunTest();
   registerInvalidJsonTest();
 });
@@ -447,13 +448,7 @@ function registerBackupTargetConnectionTest(): void {
   test('testBackupTargetConnection posts target payload', async () => {
     const calls: FetchCall[] = [];
     const queue: MockResponse[] = [
-      {
-        status: 200,
-        body: JSON.stringify({
-          ok: true,
-          message: 'http endpoint reachable (status 200 OK)'
-        })
-      }
+      { status: 200, body: JSON.stringify({ ok: true, message: 'reachable' }) }
     ];
     globalThis.fetch = createFetchStub(calls, queue);
 
@@ -473,17 +468,13 @@ function registerBackupTargetConnectionTest(): void {
     expect(body.target.name).toBe('remote-1');
     expect(body.target.kind).toBe('s3');
   });
+}
 
+function registerBackupTargetS3CredentialTest(): void {
   test('testBackupTargetConnection sends S3 credential fields', async () => {
     const calls: FetchCall[] = [];
     const queue: MockResponse[] = [
-      {
-        status: 200,
-        body: JSON.stringify({
-          ok: true,
-          message: 's3 endpoint reachable (status 200)'
-        })
-      }
+      { status: 200, body: JSON.stringify({ ok: true, message: 'reachable' }) }
     ];
     globalThis.fetch = createFetchStub(calls, queue);
 

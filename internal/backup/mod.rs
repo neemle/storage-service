@@ -334,40 +334,37 @@ async fn test_ssh_target(target: &ExternalBackupTarget) -> Result<String, String
     Ok("ssh endpoint reachable".into())
 }
 
-async fn test_s3_target(target: &ExternalBackupTarget) -> Result<String, String> {
-    let access_key = target.access_key_id.as_deref().unwrap_or_default();
-    let secret_key = target.secret_access_key.as_deref().unwrap_or_default();
-    let region = target.region.as_deref().unwrap_or_default();
-    let bucket = match target.kind {
+fn s3_bucket_name(target: &ExternalBackupTarget) -> &str {
+    match target.kind {
         ExternalTargetKind::Glacier => target.vault_name.as_deref().unwrap_or_default(),
         _ => target.bucket_name.as_deref().unwrap_or_default(),
-    };
-    let service = match target.kind {
+    }
+}
+
+fn s3_service_name(target: &ExternalBackupTarget) -> &str {
+    match target.kind {
         ExternalTargetKind::Glacier => "glacier",
         _ => "s3",
-    };
-    let base = target.endpoint.trim_end_matches('/');
-    let url_str = format!("{base}/{bucket}/");
-    let parsed = parse_target_url(&url_str)?;
+    }
+}
+
+fn parse_s3_url(url_str: &str) -> Result<(reqwest::Url, String, String), String> {
+    let parsed = parse_target_url(url_str)?;
     let host = parsed
         .host_str()
         .ok_or_else(|| "s3 endpoint missing host".to_string())?
         .to_string();
     let uri_path = parsed.path().to_string();
+    Ok((parsed, host, uri_path))
+}
+
+async fn test_s3_target(target: &ExternalBackupTarget) -> Result<String, String> {
+    let bucket = s3_bucket_name(target);
+    let base = target.endpoint.trim_end_matches('/');
+    let (parsed, host, uri_path) = parse_s3_url(&format!("{base}/{bucket}/"))?;
     let now = Utc::now();
     let payload_hash = hex_sha256(b"");
-    let auth_header = build_sigv4_authorization(
-        "HEAD",
-        &uri_path,
-        &host,
-        "",
-        &payload_hash,
-        access_key,
-        secret_key,
-        region,
-        service,
-        now,
-    );
+    let auth = sign_s3_request(target, "HEAD", &uri_path, &host, "", &payload_hash, now);
     let date_stamp = now.format("%Y%m%dT%H%M%SZ").to_string();
     let client = build_http_client(target.timeout_seconds())?;
     let response = client
@@ -375,20 +372,14 @@ async fn test_s3_target(target: &ExternalBackupTarget) -> Result<String, String>
         .header("Host", &host)
         .header("x-amz-date", &date_stamp)
         .header("x-amz-content-sha256", &payload_hash)
-        .header("Authorization", &auth_header)
+        .header("Authorization", &auth)
         .send()
         .await
         .map_err(|err| format!("s3 connectivity check failed: {err}"))?;
     if response.status().is_server_error() {
-        return Err(format!(
-            "s3 endpoint returned server error status {}",
-            response.status()
-        ));
+        return Err(format!("s3 server error status {}", response.status()));
     }
-    Ok(format!(
-        "s3 endpoint reachable (status {})",
-        response.status()
-    ))
+    Ok(format!("s3 endpoint reachable (status {})", response.status()))
 }
 
 async fn test_http_target(target: &ExternalBackupTarget) -> Result<String, String> {
@@ -749,40 +740,74 @@ async fn upload_external_targets(
     Ok(())
 }
 
+fn reject_direct_scheme(target: &ExternalBackupTarget) -> Result<(), String> {
+    match target.kind {
+        ExternalTargetKind::Sftp if target_uses_sftp_scheme(target)? => Err(
+            "direct sftp push is not available; use an http(s) sftp gateway endpoint".into(),
+        ),
+        ExternalTargetKind::Ssh if target_uses_ssh_scheme(target)? => Err(
+            "direct ssh push is not available; use an http(s) ssh gateway endpoint".into(),
+        ),
+        _ => Ok(()),
+    }
+}
+
 async fn upload_external_target(
     target: &ExternalBackupTarget,
     object_key: &str,
     bytes: &[u8],
     content_type: &str,
 ) -> Result<(), String> {
+    reject_direct_scheme(target)?;
     match target.kind {
-        ExternalTargetKind::Sftp => {
-            if target_uses_sftp_scheme(target)? {
-                return Err(
-                    "direct sftp push is not available; use an http(s) sftp gateway endpoint"
-                        .into(),
-                );
-            }
-            upload_http_target(target, object_key, bytes, content_type).await
-        }
-        ExternalTargetKind::Ssh => {
-            if target_uses_ssh_scheme(target)? {
-                return Err(
-                    "direct ssh push is not available; use an http(s) ssh gateway endpoint".into(),
-                );
-            }
-            upload_http_target(target, object_key, bytes, content_type).await
-        }
-        ExternalTargetKind::S3 => {
+        ExternalTargetKind::S3 | ExternalTargetKind::Glacier => {
             upload_s3_target(target, object_key, bytes, content_type).await
         }
-        ExternalTargetKind::Glacier => {
-            upload_s3_target(target, object_key, bytes, content_type).await
-        }
-        ExternalTargetKind::Other => {
-            upload_http_target(target, object_key, bytes, content_type).await
-        }
+        _ => upload_http_target(target, object_key, bytes, content_type).await,
     }
+}
+
+fn build_s3_put_request(
+    client: reqwest::Client,
+    parsed: reqwest::Url,
+    host: &str,
+    content_type: &str,
+    date_stamp: &str,
+    payload_hash: &str,
+    auth: &str,
+    bytes: &[u8],
+    glacier: bool,
+) -> reqwest::RequestBuilder {
+    let mut req = client
+        .put(parsed)
+        .header("Host", host)
+        .header("Content-Type", content_type)
+        .header("x-amz-date", date_stamp)
+        .header("x-amz-content-sha256", payload_hash)
+        .header("Authorization", auth)
+        .body(bytes.to_vec());
+    if glacier {
+        req = req.header("x-amz-storage-class", "GLACIER");
+    }
+    req
+}
+
+fn sign_s3_request(
+    target: &ExternalBackupTarget,
+    method: &str,
+    uri_path: &str,
+    host: &str,
+    content_type: &str,
+    payload_hash: &str,
+    now: DateTime<Utc>,
+) -> String {
+    build_sigv4_authorization(
+        method, uri_path, host, content_type, payload_hash,
+        target.access_key_id.as_deref().unwrap_or_default(),
+        target.secret_access_key.as_deref().unwrap_or_default(),
+        target.region.as_deref().unwrap_or_default(),
+        s3_service_name(target), now,
+    )
 }
 
 async fn upload_s3_target(
@@ -791,51 +816,21 @@ async fn upload_s3_target(
     bytes: &[u8],
     content_type: &str,
 ) -> Result<(), String> {
-    let access_key = target.access_key_id.as_deref().unwrap_or_default();
-    let secret_key = target.secret_access_key.as_deref().unwrap_or_default();
-    let region = target.region.as_deref().unwrap_or_default();
-    let bucket = match target.kind {
-        ExternalTargetKind::Glacier => target.vault_name.as_deref().unwrap_or_default(),
-        _ => target.bucket_name.as_deref().unwrap_or_default(),
-    };
-    let service = match target.kind {
-        ExternalTargetKind::Glacier => "glacier",
-        _ => "s3",
-    };
+    let bucket = s3_bucket_name(target);
     let s3_url = build_s3_object_url(&target.endpoint, bucket, object_key)?;
-    let parsed = parse_target_url(&s3_url)?;
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| "s3 endpoint missing host".to_string())?
-        .to_string();
-    let uri_path = parsed.path().to_string();
+    let (parsed, host, uri_path) = parse_s3_url(&s3_url)?;
     let now = Utc::now();
     let payload_hash = hex_sha256(bytes);
-    let auth_header = build_sigv4_authorization(
-        "PUT",
-        &uri_path,
-        &host,
-        content_type,
-        &payload_hash,
-        access_key,
-        secret_key,
-        region,
-        service,
-        now,
+    let auth = sign_s3_request(
+        target, "PUT", &uri_path, &host, content_type, &payload_hash, now,
     );
     let date_stamp = now.format("%Y%m%dT%H%M%SZ").to_string();
     let client = build_http_client(target.timeout_seconds())?;
-    let mut request = client
-        .put(parsed)
-        .header("Host", &host)
-        .header("Content-Type", content_type)
-        .header("x-amz-date", &date_stamp)
-        .header("x-amz-content-sha256", &payload_hash)
-        .header("Authorization", &auth_header)
-        .body(bytes.to_vec());
-    if target.kind == ExternalTargetKind::Glacier {
-        request = request.header("x-amz-storage-class", "GLACIER");
-    }
+    let glacier = target.kind == ExternalTargetKind::Glacier;
+    let request = build_s3_put_request(
+        client, parsed, &host, content_type, &date_stamp,
+        &payload_hash, &auth, bytes, glacier,
+    );
     let response = request
         .send()
         .await
@@ -869,6 +864,22 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     mac.finalize().into_bytes().to_vec()
 }
 
+fn build_canonical_request(
+    method: &str,
+    uri_path: &str,
+    host: &str,
+    content_type: &str,
+    payload_hash: &str,
+    amz_date: &str,
+) -> String {
+    let signed = "content-type;host;x-amz-content-sha256;x-amz-date";
+    let headers = format!(
+        "content-type:{content_type}\nhost:{host}\n\
+         x-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n"
+    );
+    format!("{method}\n{uri_path}\n\n{headers}\n{signed}\n{payload_hash}")
+}
+
 fn build_sigv4_authorization(
     method: &str,
     uri_path: &str,
@@ -883,24 +894,18 @@ fn build_sigv4_authorization(
 ) -> String {
     let date_stamp = now.format("%Y%m%d").to_string();
     let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
-    let credential_scope = format!("{date_stamp}/{region}/{service}/aws4_request");
-    let signed_headers = "content-type;host;x-amz-content-sha256;x-amz-date";
-    let canonical_headers = format!(
-        "content-type:{content_type}\nhost:{host}\n\
-         x-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n"
+    let scope = format!("{date_stamp}/{region}/{service}/aws4_request");
+    let signed = "content-type;host;x-amz-content-sha256;x-amz-date";
+    let canonical = build_canonical_request(
+        method, uri_path, host, content_type, payload_hash, &amz_date,
     );
-    let canonical_request = format!(
-        "{method}\n{uri_path}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
-    );
-    let canonical_hash = hex_sha256(canonical_request.as_bytes());
-    let string_to_sign = format!(
-        "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{canonical_hash}"
-    );
-    let signing_key = derive_signing_key(secret_key, &date_stamp, region, service);
-    let signature = hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes()));
+    let hash = hex_sha256(canonical.as_bytes());
+    let sts = format!("AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{hash}");
+    let key = derive_signing_key(secret_key, &date_stamp, region, service);
+    let sig = hex::encode(hmac_sha256(&key, sts.as_bytes()));
     format!(
-        "AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, \
-         SignedHeaders={signed_headers}, Signature={signature}"
+        "AWS4-HMAC-SHA256 Credential={access_key}/{scope}, \
+         SignedHeaders={signed}, Signature={sig}"
     )
 }
 

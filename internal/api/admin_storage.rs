@@ -2885,7 +2885,15 @@ mod tests {
             headers,
             CookieJar::new(),
             Json(TestBackupTargetRequest {
-                target: json!({"name":"down","kind":"s3","endpoint":"http://127.0.0.1:1/up"}),
+                target: json!({
+                    "name":"down",
+                    "kind":"s3",
+                    "endpoint":"http://127.0.0.1:1/up",
+                    "access_key_id":"AK",
+                    "secret_access_key":"SK",
+                    "region":"us-east-1",
+                    "bucket_name":"bkt"
+                }),
             }),
         )
         .await
