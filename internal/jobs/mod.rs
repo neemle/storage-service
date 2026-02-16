@@ -462,9 +462,9 @@ mod tests {
     use super::{
         backup_scheduler_enabled, execute_snapshot_policy, gc_once, multipart_cleanup_once,
         refresh_capacity_once, repair_chunk, repair_worker_step, run_backup_policies_once,
-        run_snapshot_policies_once, scrub_once, should_run_snapshot_policy,
-        start_background_jobs, start_backup_scheduler, start_capacity_refresh,
-        start_snapshot_scheduler, RepairQueue, GC_RUNS, MULTIPART_CLEANUP_RUNS, SCRUB_RUNS,
+        run_snapshot_policies_once, scrub_once, should_run_snapshot_policy, start_background_jobs,
+        start_backup_scheduler, start_capacity_refresh, start_snapshot_scheduler, RepairQueue,
+        GC_RUNS, MULTIPART_CLEANUP_RUNS, SCRUB_RUNS,
     };
     use crate::api::AppState;
     use crate::meta::backup_repos::BackupPolicyCreate;

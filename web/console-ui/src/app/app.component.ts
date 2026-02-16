@@ -109,7 +109,10 @@ interface WizardTarget {
   timeoutSeconds: string;
 }
 
-type WizardTargetScalarField = 'name' | 'kind' | 'endpoint' | 'method' | 'enabled' | 'headerKey' | 'headerValue' | 'timeoutSeconds';
+type WizardTargetScalarField =
+  | 'name' | 'kind' | 'endpoint' | 'method'
+  | 'enabled' | 'headerKey' | 'headerValue'
+  | 'timeoutSeconds';
 
 interface AppSettings {
   theme: ThemeMode;
