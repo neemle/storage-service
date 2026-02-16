@@ -68,6 +68,7 @@
                       <div class="cell cell-stack">
                         <span>{{ formatBytes(getBucketSize(bucket.name)) }}</span>
                         <span class="sub">{{ getBucketObjectCount(bucket.name) }} objects</span>
+                        <span class="sub">Max available {{ formatBytes(bucket.maxAvailableBytes) }}</span>
                       </div>
                       <div class="cell">
                         <mat-slide-toggle color="primary" [checked]="bucket.publicRead" (change)="handleTogglePublic(bucket)" [disabled]="bucketBusy()">

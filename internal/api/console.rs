@@ -2,6 +2,7 @@ use crate::api::auth::{
     clear_cookie, clear_session_cookie, extract_token, session_cookie, transient_cookie,
     verify_claims,
 };
+use crate::api::volume_capacity::{load_volume_capacity_context, VolumeCapacityContext};
 use crate::api::AppState;
 use crate::auth::oidc::{authorization_url, exchange_code_for_identity, generate_state_nonce};
 use crate::auth::token::Claims;
@@ -688,20 +689,37 @@ async fn list_buckets(
         .list_buckets(claims.user_id)
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "list failed".into()))?;
+    let capacity = load_volume_capacity_context(&state.repo)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "list failed".into()))?;
     let response = buckets
         .into_iter()
-        .map(|bucket| {
-            serde_json::json!({
-                "id": bucket.id,
-                "name": bucket.name,
-                "createdAt": bucket.created_at.to_rfc3339(),
-                "versioningStatus": bucket.versioning_status,
-                "publicRead": bucket.public_read,
-                "isWorm": bucket.is_worm
-            })
-        })
+        .map(|bucket| bucket_summary_json(bucket, &capacity, state.config.replication_factor))
         .collect();
     Ok(Json(response))
+}
+
+fn bucket_summary_json(
+    bucket: crate::meta::models::Bucket,
+    capacity: &VolumeCapacityContext,
+    replication_factor: u32,
+) -> Value {
+    let bound_ids = capacity
+        .bound_node_ids(bucket.id)
+        .into_iter()
+        .map(|node_id| node_id.to_string())
+        .collect::<Vec<_>>();
+    let max_available = capacity.max_available_bytes(bucket.id, replication_factor);
+    serde_json::json!({
+        "id": bucket.id,
+        "name": bucket.name,
+        "createdAt": bucket.created_at.to_rfc3339(),
+        "versioningStatus": bucket.versioning_status,
+        "publicRead": bucket.public_read,
+        "isWorm": bucket.is_worm,
+        "boundNodeIds": bound_ids,
+        "maxAvailableBytes": max_available
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -3664,6 +3682,30 @@ mod tests {
             .update_bucket_public(bucket.id, true)
             .await
             .expect("public");
+        let volume_node_id = Uuid::new_v4();
+        state
+            .repo
+            .upsert_node(
+                volume_node_id,
+                "replica",
+                "http://bucket-fields-volume:9010",
+                "online",
+                Some(1000),
+                Some(700),
+                None,
+            )
+            .await
+            .expect("volume node");
+        state
+            .repo
+            .set_replica_runtime_mode(volume_node_id, "volume", None)
+            .await
+            .expect("volume mode");
+        state
+            .repo
+            .replace_bucket_volume_bindings(bucket.id, &[volume_node_id])
+            .await
+            .expect("binding");
 
         let list = list_buckets(State(state), headers, CookieJar::new())
             .await
@@ -3672,6 +3714,28 @@ mod tests {
         assert_eq!(first["versioningStatus"], "enabled");
         assert_eq!(first["publicRead"], true);
         assert_eq!(first["isWorm"], false);
+        assert_eq!(first["boundNodeIds"], json!([volume_node_id.to_string()]));
+        assert_eq!(first["maxAvailableBytes"], json!(700));
+    }
+
+    #[tokio::test]
+    async fn list_buckets_reports_capacity_lookup_error() {
+        let (state, pool, _dir) = test_support::build_state("master").await;
+        let (user, token) = create_user_and_token(&state).await;
+        let headers = auth_headers(&token);
+        state
+            .repo
+            .create_bucket("bucket-capacity-error", user.id)
+            .await
+            .expect("bucket");
+        let guard = TableRenameGuard::rename(&pool, "nodes")
+            .await
+            .expect("rename");
+        let err = list_buckets(State(state), headers, CookieJar::new())
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
+        guard.restore().await.expect("restore");
     }
 
     #[tokio::test]

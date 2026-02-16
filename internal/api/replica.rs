@@ -62,6 +62,8 @@ struct JoinContext {
     join_token: String,
     master: String,
     sub_mode: String,
+    capacity_bytes: i64,
+    free_bytes: i64,
 }
 
 pub async fn build_servers(state: AppState) -> Result<Servers, String> {
@@ -188,19 +190,22 @@ fn join_context(state: &AppState) -> Result<JoinContext, String> {
         .replica_advertise
         .clone()
         .unwrap_or_else(|| format!("http://localhost{}", state.config.replica_listen));
+    let usage = crate::util::storage_volume::data_dirs_usage(&state.config.data_dirs);
     Ok(JoinContext {
         address,
         join_token,
         master,
         sub_mode: state.replica_mode.get().as_str().to_string(),
+        capacity_bytes: usage.capacity_bytes,
+        free_bytes: usage.free_bytes,
     })
 }
 
 async fn send_join_request(context: &JoinContext) -> Result<JoinResponse, String> {
     let request = JoinRequest {
         address_internal: context.address.clone(),
-        capacity_bytes: 0,
-        free_bytes: 0,
+        capacity_bytes: context.capacity_bytes,
+        free_bytes: context.free_bytes,
         sub_mode: context.sub_mode.clone(),
     };
     let url = format!(
@@ -893,14 +898,15 @@ fn spawn_heartbeat(state: AppState) {
         let client = Client::new();
         loop {
             let _ = sync_replica_mode(&state, &client, master.as_str()).await;
+            let usage = crate::util::storage_volume::data_dirs_usage(&state.config.data_dirs);
             let url = format!(
                 "{}/internal/v1/cluster/heartbeat",
                 master.trim_end_matches('/')
             );
             let request = HeartbeatRequest {
                 node_id: state.node_id,
-                free_bytes: 0,
-                capacity_bytes: 0,
+                free_bytes: usage.free_bytes,
+                capacity_bytes: usage.capacity_bytes,
             };
             let _ = client
                 .post(url)

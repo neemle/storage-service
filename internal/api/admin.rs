@@ -10,6 +10,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::Digest;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -209,7 +210,11 @@ fn to_user_response(admin_username: &str, user: crate::meta::models::User) -> Us
     }
 }
 
-fn node_response(node: crate::meta::models::Node) -> serde_json::Value {
+fn node_response(
+    node: crate::meta::models::Node,
+    runtime_modes: &HashMap<Uuid, String>,
+) -> serde_json::Value {
+    let sub_mode = resolve_node_sub_mode(&node, runtime_modes);
     serde_json::json!({
         "nodeId": node.node_id,
         "role": node.role,
@@ -217,8 +222,34 @@ fn node_response(node: crate::meta::models::Node) -> serde_json::Value {
         "status": node.status,
         "lastHeartbeatAt": node.last_heartbeat_at.map(|ts| ts.to_rfc3339()),
         "capacityBytes": node.capacity_bytes,
-        "freeBytes": node.free_bytes
+        "freeBytes": node.free_bytes,
+        "subMode": sub_mode
     })
+}
+
+fn resolve_node_sub_mode(
+    node: &crate::meta::models::Node,
+    runtime_modes: &HashMap<Uuid, String>,
+) -> Option<String> {
+    if node.role != "replica" {
+        return None;
+    }
+    Some(
+        runtime_modes
+            .get(&node.node_id)
+            .cloned()
+            .unwrap_or_else(|| "delivery".to_string()),
+    )
+}
+
+fn runtime_mode_map(
+    entries: Vec<crate::meta::models::ReplicaRuntimeConfig>,
+) -> HashMap<Uuid, String> {
+    let mut result = HashMap::new();
+    for entry in entries {
+        result.insert(entry.node_id, entry.sub_mode);
+    }
+    result
 }
 
 fn audit_response(log: crate::meta::models::AuditLog) -> serde_json::Value {
@@ -420,7 +451,16 @@ async fn list_nodes(
         .list_nodes()
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "list failed".into()))?;
-    let response = nodes.into_iter().map(node_response).collect();
+    let runtime_modes = state
+        .repo
+        .list_replica_runtime_modes()
+        .await
+        .map(runtime_mode_map)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "list failed".into()))?;
+    let response = nodes
+        .into_iter()
+        .map(|node| node_response(node, &runtime_modes))
+        .collect();
     Ok(Json(response))
 }
 
@@ -517,8 +557,8 @@ mod tests {
     use super::{
         create_join_token, create_user, delete_user, list_audit, list_nodes, list_users, login,
         logout, me, parse_audit_pagination, parse_ts, record_audit, register_login_failure,
-        update_user, AuditQuery, CreateUserRequest, LoginRequest, UpdateUserRequest,
-        DEFAULT_AUDIT_LIMIT,
+        resolve_node_sub_mode, update_user, AuditQuery, CreateUserRequest, LoginRequest,
+        UpdateUserRequest, DEFAULT_AUDIT_LIMIT,
     };
     use crate::api::auth::session_cookie;
     use crate::auth::password;
@@ -592,6 +632,19 @@ mod tests {
             groups_claim: "groups".to_string(),
             admin_groups: vec!["nss-admin".to_string()],
             audience: "nss-console".to_string(),
+        }
+    }
+
+    fn sample_node(role: &str) -> crate::meta::models::Node {
+        crate::meta::models::Node {
+            node_id: Uuid::new_v4(),
+            role: role.to_string(),
+            address_internal: "http://node".to_string(),
+            status: "online".to_string(),
+            last_heartbeat_at: None,
+            capacity_bytes: None,
+            free_bytes: None,
+            created_at: Utc::now(),
         }
     }
 
@@ -1617,10 +1670,11 @@ mod tests {
             .expect("list users");
         assert!(users.0.iter().any(|user| user.is_admin));
 
+        let replica_id = Uuid::new_v4();
         state
             .repo
             .upsert_node(
-                Uuid::new_v4(),
+                replica_id,
                 "replica",
                 "http://node",
                 "online",
@@ -1630,10 +1684,38 @@ mod tests {
             )
             .await
             .expect("node");
+        state
+            .repo
+            .set_replica_runtime_mode(replica_id, "backup", None)
+            .await
+            .expect("runtime mode");
         let nodes = list_nodes(State(state), headers, CookieJar::new())
             .await
             .expect("list nodes");
         assert!(nodes.0.iter().any(|val| val.get("capacityBytes").is_some()));
+        assert!(nodes.0.iter().any(|entry| entry["subMode"] == "backup"));
+        assert!(nodes.0.iter().any(|entry| entry["subMode"].is_null()));
+    }
+
+    #[test]
+    fn resolve_node_sub_mode_defaults_to_delivery_for_replica() {
+        let node = sample_node("replica");
+        let mode = resolve_node_sub_mode(&node, &std::collections::HashMap::new());
+        assert_eq!(mode.as_deref(), Some("delivery"));
+    }
+
+    #[tokio::test]
+    async fn list_nodes_reports_runtime_mode_lookup_error() {
+        let (state, pool, _dir) = test_support::build_state("master").await;
+        let headers = admin_headers(&state).await;
+        let guard = test_support::TableRenameGuard::rename(&pool, "replica_runtime_config")
+            .await
+            .expect("rename");
+        let err = list_nodes(State(state), headers, CookieJar::new())
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
+        guard.restore().await.expect("restore");
     }
 
     #[tokio::test]

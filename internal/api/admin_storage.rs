@@ -1,4 +1,5 @@
 use crate::api::auth::{extract_token, verify_claims};
+use crate::api::volume_capacity::{load_volume_capacity_context, VolumeCapacityContext};
 use crate::api::AppState;
 use crate::backup;
 use crate::meta::backup_repos::{BackupPolicyCreate, BackupPolicyPatch};
@@ -20,6 +21,20 @@ const MAX_LIST_LIMIT: i64 = 200;
 #[serde(rename_all = "camelCase")]
 struct UpdateBucketWormRequest {
     is_worm: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateBucketVolumesRequest {
+    node_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BucketVolumesResponse {
+    bucket_name: String,
+    node_ids: Vec<Uuid>,
+    max_available_bytes: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,10 +136,15 @@ pub fn router(state: AppState) -> Router {
 }
 
 fn bucket_routes() -> Router<AppState> {
-    Router::new().route(
-        "/admin/v1/storage/buckets/{bucket_name}/worm",
-        patch(update_bucket_worm),
-    )
+    Router::new()
+        .route(
+            "/admin/v1/storage/buckets/{bucket_name}/worm",
+            patch(update_bucket_worm),
+        )
+        .route(
+            "/admin/v1/storage/buckets/{bucket_name}/volumes",
+            get(get_bucket_volumes).patch(update_bucket_volumes),
+        )
 }
 
 fn snapshot_routes() -> Router<AppState> {
@@ -251,6 +271,91 @@ async fn update_bucket_worm(
         .await
         .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_bucket_volumes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Path(bucket_name): Path<String>,
+) -> Result<Json<BucketVolumesResponse>, (StatusCode, String)> {
+    let _ = require_admin(&state, &headers, &jar).await?;
+    let bucket = load_bucket_by_name(&state, &bucket_name).await?;
+    let capacity = load_volume_capacity_context(&state.repo)
+        .await
+        .map_err(internal_error)?;
+    let node_ids = capacity.bound_node_ids(bucket.id);
+    let max_available = capacity.max_available_bytes(bucket.id, state.config.replication_factor);
+    Ok(Json(build_bucket_volumes_response(
+        bucket_name,
+        node_ids,
+        max_available,
+    )))
+}
+
+async fn update_bucket_volumes(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Path(bucket_name): Path<String>,
+    Json(payload): Json<UpdateBucketVolumesRequest>,
+) -> Result<Json<BucketVolumesResponse>, (StatusCode, String)> {
+    let _ = require_admin(&state, &headers, &jar).await?;
+    let bucket = load_bucket_by_name(&state, &bucket_name).await?;
+    let node_ids = sorted_unique_uuids(payload.node_ids);
+    let capacity = load_volume_capacity_context(&state.repo)
+        .await
+        .map_err(internal_error)?;
+    validate_volume_binding_node_ids(&node_ids, &capacity)?;
+    state
+        .repo
+        .replace_bucket_volume_bindings(bucket.id, &node_ids)
+        .await
+        .map_err(internal_error)?;
+    let max_available =
+        capacity.max_available_bytes_for_nodes(&node_ids, state.config.replication_factor);
+    Ok(Json(build_bucket_volumes_response(
+        bucket_name,
+        node_ids,
+        max_available,
+    )))
+}
+
+fn sorted_unique_uuids(values: Vec<Uuid>) -> Vec<Uuid> {
+    let mut node_ids = values;
+    node_ids.sort_unstable();
+    node_ids.dedup();
+    node_ids
+}
+
+fn validate_volume_binding_node_ids(
+    node_ids: &[Uuid],
+    context: &VolumeCapacityContext,
+) -> Result<(), (StatusCode, String)> {
+    for node_id in node_ids {
+        if !context.has_node(*node_id) {
+            return Err((StatusCode::NOT_FOUND, "node not found".into()));
+        }
+        if !context.is_binding_eligible_node(*node_id) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "node is not eligible as volume".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn build_bucket_volumes_response(
+    bucket_name: String,
+    node_ids: Vec<Uuid>,
+    max_available_bytes: i64,
+) -> BucketVolumesResponse {
+    BucketVolumesResponse {
+        bucket_name,
+        node_ids,
+        max_available_bytes,
+    }
 }
 
 async fn upsert_snapshot_policy(
@@ -747,6 +852,7 @@ async fn update_replica_mode(
     Json(payload): Json<ReplicaModeRequest>,
 ) -> Result<Json<ReplicaModeResponse>, (StatusCode, String)> {
     let user_id = require_admin(&state, &headers, &jar).await?;
+    ensure_replica_mode_target_is_slave(&state, node_id).await?;
     let normalized_mode = normalize_replica_sub_mode(payload.sub_mode.as_str())?;
     let mode = state
         .repo
@@ -759,18 +865,31 @@ async fn update_replica_mode(
     }))
 }
 
+async fn ensure_replica_mode_target_is_slave(
+    state: &AppState,
+    node_id: Uuid,
+) -> Result<(), (StatusCode, String)> {
+    let node = state.repo.get_node(node_id).await.map_err(internal_error)?;
+    let node = node.ok_or((StatusCode::NOT_FOUND, "node not found".into()))?;
+    if node.role == "replica" {
+        return Ok(());
+    }
+    Err((StatusCode::BAD_REQUEST, "node is not a slave node".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build_export_response, create_backup_policy, create_snapshot, ensure_scope_node_exists,
-        export_backup_run, list_backup_policies, list_backup_runs, list_snapshot_policies,
-        list_snapshots, normalize_backup_scope_value, parse_list_query, require_admin,
-        resolve_export_format, restore_snapshot, run_backup_policy, test_backup_target,
-        update_backup_policy, update_bucket_worm, update_replica_mode, upsert_snapshot_policy,
-        validate_backup_policy_patch, validate_backup_policy_payload, validate_external_targets,
-        CreateBackupPolicyRequest, CreateSnapshotRequest, ExportQuery, ListQuery,
-        ReplicaModeRequest, RestoreSnapshotRequest, TestBackupTargetRequest,
-        UpdateBackupPolicyRequest, UpdateBucketWormRequest, UpsertSnapshotPolicyRequest,
+        export_backup_run, get_bucket_volumes, list_backup_policies, list_backup_runs,
+        list_snapshot_policies, list_snapshots, normalize_backup_scope_value, parse_list_query,
+        require_admin, resolve_export_format, restore_snapshot, run_backup_policy,
+        test_backup_target, update_backup_policy, update_bucket_volumes, update_bucket_worm,
+        update_replica_mode, upsert_snapshot_policy, validate_backup_policy_patch,
+        validate_backup_policy_payload, validate_external_targets, CreateBackupPolicyRequest,
+        CreateSnapshotRequest, ExportQuery, ListQuery, ReplicaModeRequest, RestoreSnapshotRequest,
+        TestBackupTargetRequest, UpdateBackupPolicyRequest, UpdateBucketVolumesRequest,
+        UpdateBucketWormRequest, UpsertSnapshotPolicyRequest,
     };
     use crate::test_support::{self, FailTriggerGuard, TableRenameGuard};
     use axum::extract::{Path, Query, State};
@@ -847,6 +966,33 @@ mod tests {
             .await
             .expect("bucket")
             .expect("bucket")
+    }
+
+    async fn create_replica_node_with_mode(
+        state: &crate::api::AppState,
+        mode: &str,
+        label: &str,
+    ) -> Uuid {
+        let node_id = Uuid::new_v4();
+        state
+            .repo
+            .upsert_node(
+                node_id,
+                "replica",
+                &format!("http://{label}:9010"),
+                "online",
+                Some(1000),
+                Some(900),
+                None,
+            )
+            .await
+            .expect("node");
+        state
+            .repo
+            .set_replica_runtime_mode(node_id, mode, None)
+            .await
+            .expect("mode");
+        node_id
     }
 
     async fn seed_object(state: &crate::api::AppState, bucket_id: Uuid, key: &str, bytes: &[u8]) {
@@ -1055,6 +1201,219 @@ mod tests {
             .await,
             StatusCode::UNAUTHORIZED,
         );
+    }
+
+    #[tokio::test]
+    async fn bucket_volume_binding_flow_and_validation() {
+        let (state, _pool, _dir) = test_support::build_state("master").await;
+        let headers = admin_headers(&state).await;
+        let owner = create_user(&state, "owner-vol-bind").await;
+        let bucket = create_bucket(&state, "volume-bound-a", owner.id, false).await;
+        let volume_node_id = Uuid::new_v4();
+        state
+            .repo
+            .upsert_node(
+                volume_node_id,
+                "replica",
+                "http://volume-node:9010",
+                "online",
+                Some(1000),
+                Some(900),
+                None,
+            )
+            .await
+            .expect("volume node");
+        state
+            .repo
+            .set_replica_runtime_mode(volume_node_id, "volume", None)
+            .await
+            .expect("volume mode");
+
+        let Json(initial) = get_bucket_volumes(
+            State(state.clone()),
+            headers.clone(),
+            CookieJar::new(),
+            Path(bucket.name.clone()),
+        )
+        .await
+        .expect("initial volumes");
+        assert_eq!(initial.bucket_name, bucket.name);
+
+        let Json(updated) = update_bucket_volumes(
+            State(state.clone()),
+            headers.clone(),
+            CookieJar::new(),
+            Path(bucket.name.clone()),
+            Json(UpdateBucketVolumesRequest {
+                node_ids: vec![volume_node_id],
+            }),
+        )
+        .await
+        .expect("update volumes");
+        assert_eq!(updated.node_ids, vec![volume_node_id]);
+        assert_eq!(updated.max_available_bytes, 900);
+
+        let Json(refreshed) = get_bucket_volumes(
+            State(state.clone()),
+            headers.clone(),
+            CookieJar::new(),
+            Path(bucket.name.clone()),
+        )
+        .await
+        .expect("refreshed volumes");
+        assert_eq!(refreshed.node_ids, vec![volume_node_id]);
+
+        let missing = update_bucket_volumes(
+            State(state.clone()),
+            headers.clone(),
+            CookieJar::new(),
+            Path(bucket.name.clone()),
+            Json(UpdateBucketVolumesRequest {
+                node_ids: vec![Uuid::new_v4()],
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(missing.0, StatusCode::NOT_FOUND);
+
+        let backup_node_id = Uuid::new_v4();
+        state
+            .repo
+            .upsert_node(
+                backup_node_id,
+                "replica",
+                "http://backup-node:9010",
+                "online",
+                Some(1000),
+                Some(800),
+                None,
+            )
+            .await
+            .expect("backup node");
+        state
+            .repo
+            .set_replica_runtime_mode(backup_node_id, "backup", None)
+            .await
+            .expect("backup mode");
+        let invalid = update_bucket_volumes(
+            State(state),
+            headers,
+            CookieJar::new(),
+            Path(bucket.name),
+            Json(UpdateBucketVolumesRequest {
+                node_ids: vec![backup_node_id],
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(invalid.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn bucket_volume_handlers_require_admin() {
+        let (state, _pool, _dir) = test_support::build_state("master").await;
+        assert_error_status(
+            get_bucket_volumes(
+                State(state.clone()),
+                HeaderMap::new(),
+                CookieJar::new(),
+                Path("missing".to_string()),
+            )
+            .await,
+            StatusCode::UNAUTHORIZED,
+        );
+        assert_error_status(
+            update_bucket_volumes(
+                State(state),
+                HeaderMap::new(),
+                CookieJar::new(),
+                Path("missing".to_string()),
+                Json(UpdateBucketVolumesRequest { node_ids: vec![] }),
+            )
+            .await,
+            StatusCode::UNAUTHORIZED,
+        );
+    }
+
+    #[tokio::test]
+    async fn bucket_volume_handlers_report_missing_bucket() {
+        let (state, _pool, _dir) = test_support::build_state("master").await;
+        let headers = admin_headers(&state).await;
+        assert_error_status(
+            get_bucket_volumes(
+                State(state.clone()),
+                headers.clone(),
+                CookieJar::new(),
+                Path("missing".to_string()),
+            )
+            .await,
+            StatusCode::NOT_FOUND,
+        );
+        assert_error_status(
+            update_bucket_volumes(
+                State(state),
+                headers,
+                CookieJar::new(),
+                Path("missing".to_string()),
+                Json(UpdateBucketVolumesRequest { node_ids: vec![] }),
+            )
+            .await,
+            StatusCode::NOT_FOUND,
+        );
+    }
+
+    #[tokio::test]
+    async fn bucket_volume_handlers_map_storage_errors() {
+        let (state, pool, _dir) = test_support::build_state("master").await;
+        let headers = admin_headers(&state).await;
+        let owner = create_user(&state, "owner-vol-bind-errors").await;
+        let bucket = create_bucket(&state, "volume-bound-errors", owner.id, false).await;
+        let volume_node_id =
+            create_replica_node_with_mode(&state, "volume", "vol-bind-errors").await;
+        let guard = TableRenameGuard::rename(&pool, "nodes")
+            .await
+            .expect("rename");
+        assert_error_status(
+            get_bucket_volumes(
+                State(state.clone()),
+                headers.clone(),
+                CookieJar::new(),
+                Path(bucket.name.clone()),
+            )
+            .await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
+        assert_error_status(
+            update_bucket_volumes(
+                State(state.clone()),
+                headers.clone(),
+                CookieJar::new(),
+                Path(bucket.name.clone()),
+                Json(UpdateBucketVolumesRequest {
+                    node_ids: vec![volume_node_id],
+                }),
+            )
+            .await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
+        guard.restore().await.expect("restore");
+        let trigger = FailTriggerGuard::create(&pool, "bucket_volume_bindings", "BEFORE", "INSERT")
+            .await
+            .expect("trigger");
+        assert_error_status(
+            update_bucket_volumes(
+                State(state),
+                headers,
+                CookieJar::new(),
+                Path(bucket.name),
+                Json(UpdateBucketVolumesRequest {
+                    node_ids: vec![volume_node_id],
+                }),
+            )
+            .await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
+        trigger.remove().await.expect("remove");
     }
 
     #[tokio::test]
@@ -1586,6 +1945,60 @@ mod tests {
         .await
         .expect("mode");
         assert_eq!(mode.sub_mode, "volume");
+    }
+
+    #[tokio::test]
+    async fn update_replica_mode_validates_target_node() {
+        let (state, _pool, _dir) = test_support::build_state("master").await;
+        let master_node_id = state.node_id;
+        let headers = admin_headers(&state).await;
+        let missing = update_replica_mode(
+            State(state.clone()),
+            headers.clone(),
+            CookieJar::new(),
+            Path(Uuid::new_v4()),
+            Json(ReplicaModeRequest {
+                sub_mode: "backup".to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(missing.0, StatusCode::NOT_FOUND);
+        let master = update_replica_mode(
+            State(state),
+            headers,
+            CookieJar::new(),
+            Path(master_node_id),
+            Json(ReplicaModeRequest {
+                sub_mode: "backup".to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(master.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn update_replica_mode_maps_runtime_write_error() {
+        let (state, pool, _dir) = test_support::build_state("master").await;
+        let headers = admin_headers(&state).await;
+        let node_id = create_replica_node_with_mode(&state, "delivery", "mode-write-err").await;
+        let guard = TableRenameGuard::rename(&pool, "replica_runtime_config")
+            .await
+            .expect("rename");
+        let err = update_replica_mode(
+            State(state),
+            headers,
+            CookieJar::new(),
+            Path(node_id),
+            Json(ReplicaModeRequest {
+                sub_mode: "backup".to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
+        guard.restore().await.expect("restore");
     }
 
     #[test]

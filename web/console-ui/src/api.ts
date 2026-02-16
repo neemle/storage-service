@@ -435,6 +435,13 @@ export async function updateBucketWorm(bucketName: string, isWorm: boolean): Pro
   });
 }
 
+export async function updateBucketVolumes(bucketName: string, nodeIds: string[]): Promise<void> {
+  await apiFetch(`/admin/v1/storage/buckets/${encodeURIComponent(bucketName)}/volumes`, {
+    method: 'PATCH',
+    body: JSON.stringify({ nodeIds })
+  });
+}
+
 export async function upsertSnapshotPolicy(
   bucketName: string,
   triggerKind: SnapshotTrigger,

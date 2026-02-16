@@ -22,6 +22,8 @@ export interface Bucket {
   versioningStatus: BucketVersioningStatus;
   publicRead: boolean;
   isWorm: boolean;
+  boundNodeIds: string[];
+  maxAvailableBytes: number;
 }
 
 export type BucketVersioningStatus = 'off' | 'enabled' | 'suspended';
@@ -156,6 +158,7 @@ export interface NodeInfo {
   lastHeartbeatAt?: string | null;
   capacityBytes?: number | null;
   freeBytes?: number | null;
+  subMode?: ReplicaSubMode | null;
 }
 
 export interface JoinToken {

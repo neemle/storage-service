@@ -44,6 +44,7 @@ import {
   updateAccessKey,
   updateBackupPolicy,
   updateBucketPublic,
+  updateBucketVolumes,
   updateBucketVersioning,
   updateBucketWorm,
   updateObjectMetadata,
@@ -92,6 +93,7 @@ const BACKUP_TYPES: BackupType[] = ['full', 'incremental', 'differential'];
 const BACKUP_SCHEDULES: BackupSchedule[] = ['hourly', 'daily', 'weekly', 'monthly', 'on_demand'];
 const BACKUP_STRATEGIES: BackupStrategy[] = ['3-2-1', '3-2-1-1-0', '4-3-2'];
 const BUCKET_VERSIONING_OPTIONS: BucketVersioningStatus[] = ['off', 'enabled', 'suspended'];
+const BACKUP_WIZARD_STEPS = ['Scope', 'Buckets', 'Policy', 'Targets'];
 
 interface AppSettings {
   theme: ThemeMode;
@@ -193,6 +195,8 @@ export class AppComponent {
   readonly replicaModes = signal<Map<string, ReplicaSubMode>>(new Map());
   readonly storageBucketName = signal('');
   readonly wormBucketName = signal('');
+  readonly volumeBucketName = signal('');
+  readonly selectedVolumeNodeIds = signal<string[]>([]);
   readonly wormEnabled = signal(true);
   readonly snapshotTrigger = signal<SnapshotTrigger>('daily');
   readonly snapshotRetention = signal(7);
@@ -208,6 +212,9 @@ export class AppComponent {
   readonly backupRetention = signal(7);
   readonly backupEnabled = signal(true);
   readonly backupExternalTargets = signal('[]');
+  readonly backupWizardOpen = signal(false);
+  readonly backupWizardStep = signal(0);
+  readonly externalTargetsExampleOpen = signal(false);
   readonly editingSnapshotPolicyId = signal('');
   readonly editingBackupPolicyId = signal('');
 
@@ -216,6 +223,7 @@ export class AppComponent {
   readonly backupScheduleOptions = BACKUP_SCHEDULES;
   readonly backupStrategyOptions = BACKUP_STRATEGIES;
   readonly bucketVersioningOptions = BUCKET_VERSIONING_OPTIONS;
+  readonly backupWizardSteps = BACKUP_WIZARD_STEPS;
   readonly backupExternalTargetsExample = JSON.stringify(
     [
       {
@@ -314,6 +322,13 @@ export class AppComponent {
   });
 
   readonly replicaNodes = computed(() => this.nodes().filter((node) => node.role === 'replica'));
+  readonly volumeEligibleNodes = computed(() =>
+    this.nodes().filter((node) => this.isVolumeEligibleNode(node))
+  );
+  readonly selectedVolumeBucketMaxAvailable = computed(() => {
+    const bucket = this.buckets().find((entry) => entry.name === this.volumeBucketName());
+    return bucket?.maxAvailableBytes ?? 0;
+  });
   readonly editingBackupPolicy = computed(() => this.editingBackupPolicyId().length > 0);
 
   readonly snapshotPoliciesForBucket = computed(() => {
@@ -605,6 +620,7 @@ export class AppComponent {
       const [users, nodes] = await Promise.all([listUsers(), listNodes()]);
       this.adminUsers.set(users);
       this.nodes.set(nodes);
+      this.syncReplicaModesFromNodes(nodes);
       await Promise.all([this.refreshAudit(), this.refreshStorageAdmin()]);
     } catch (err) {
       this.error.set(this.getErrorMessage(err));
@@ -835,6 +851,32 @@ export class AppComponent {
     this.syncWormSelection(bucketName);
   }
 
+  handleSelectVolumeBucket(bucketName: string): void {
+    this.volumeBucketName.set(bucketName);
+    this.selectedVolumeNodeIds.set(this.resolveBoundNodesForBucket(bucketName));
+  }
+
+  handleVolumeNodeSelection(nodeIds: string[]): void {
+    this.selectedVolumeNodeIds.set([...nodeIds]);
+  }
+
+  async handleSetBucketVolumes(): Promise<void> {
+    const bucketName = this.volumeBucketName().trim();
+    if (!bucketName) {
+      this.error.set('Volume binding bucket is required');
+      return;
+    }
+    this.error.set('');
+    try {
+      await updateBucketVolumes(bucketName, this.selectedVolumeNodeIds());
+      await this.refresh();
+      await this.refreshStorageAdmin();
+      this.handleSelectVolumeBucket(bucketName);
+    } catch (err) {
+      this.error.set(this.getErrorMessage(err));
+    }
+  }
+
   setSnapshotRetention(raw: string): void {
     this.snapshotRetention.set(this.parsePositiveInteger(raw, this.snapshotRetention()));
   }
@@ -935,6 +977,64 @@ export class AppComponent {
     }
   }
 
+  openBackupWizard(policy?: BackupPolicy): void {
+    if (policy) {
+      this.editBackupPolicy(policy);
+    } else {
+      this.clearBackupPolicyEditor();
+    }
+    this.error.set('');
+    this.backupWizardStep.set(0);
+    this.backupWizardOpen.set(true);
+  }
+
+  closeBackupWizard(): void {
+    this.backupWizardOpen.set(false);
+    this.backupWizardStep.set(0);
+    this.externalTargetsExampleOpen.set(false);
+  }
+
+  nextBackupWizardStep(): void {
+    const error = this.validateBackupWizardStep(this.backupWizardStep());
+    if (error) {
+      this.error.set(error);
+      return;
+    }
+    this.error.set('');
+    const max = this.backupWizardSteps.length - 1;
+    this.backupWizardStep.set(Math.min(this.backupWizardStep() + 1, max));
+  }
+
+  previousBackupWizardStep(): void {
+    this.error.set('');
+    this.backupWizardStep.set(Math.max(this.backupWizardStep() - 1, 0));
+  }
+
+  async saveBackupWizard(): Promise<void> {
+    const error = this.validateBackupWizardStep(this.backupWizardSteps.length - 1);
+    if (error) {
+      this.error.set(error);
+      return;
+    }
+    await this.handleSaveBackupPolicy();
+    if (!this.error()) {
+      this.closeBackupWizard();
+    }
+  }
+
+  openExternalTargetsExample(): void {
+    this.externalTargetsExampleOpen.set(true);
+  }
+
+  closeExternalTargetsExample(): void {
+    this.externalTargetsExampleOpen.set(false);
+  }
+
+  applyExternalTargetsExample(): void {
+    this.backupExternalTargets.set(this.backupExternalTargetsExample);
+    this.externalTargetsExampleOpen.set(false);
+  }
+
   async handleSaveBackupPolicy(): Promise<void> {
     const validationError = this.validateBackupPolicyForm();
     if (validationError) {
@@ -961,15 +1061,7 @@ export class AppComponent {
   }
 
   handleShowExternalTargetsExample(): void {
-    const prompt = [
-      'External target example:',
-      this.backupExternalTargetsExample,
-      '',
-      'Press OK to fill this example into the form.'
-    ].join('\n');
-    if (window.confirm(prompt)) {
-      this.backupExternalTargets.set(this.backupExternalTargetsExample);
-    }
+    this.openExternalTargetsExample();
   }
 
   async handleTestExternalTargets(): Promise<void> {
@@ -1052,6 +1144,11 @@ export class AppComponent {
         copy.set(updated.nodeId, updated.subMode);
         return copy;
       });
+      this.nodes.set(
+        this.nodes().map((entry) =>
+          entry.nodeId === updated.nodeId ? { ...entry, subMode: updated.subMode } : entry
+        )
+      );
     } catch (err) {
       this.error.set(this.getErrorMessage(err));
     }
@@ -1665,10 +1762,16 @@ export class AppComponent {
     if (!this.backupTargetBucketName() && firstBucket) {
       this.backupTargetBucketName.set(firstBucket);
     }
+    if (!this.volumeBucketName() && firstBucket) {
+      this.handleSelectVolumeBucket(firstBucket);
+    }
     if (!this.backupExternalTargets().trim()) {
       this.backupExternalTargets.set('[]');
     }
     this.syncWormSelection();
+    if (this.volumeBucketName()) {
+      this.selectedVolumeNodeIds.set(this.resolveBoundNodesForBucket(this.volumeBucketName()));
+    }
   }
 
   private syncWormSelection(bucketName?: string): void {
@@ -1694,6 +1797,33 @@ export class AppComponent {
     if (editingBackupId && !backupPolicies.some((entry) => entry.id === editingBackupId)) {
       this.clearBackupPolicyEditor();
     }
+  }
+
+  private resolveBoundNodesForBucket(bucketName: string): string[] {
+    const bucket = this.buckets().find((entry) => entry.name === bucketName);
+    return bucket?.boundNodeIds ? [...bucket.boundNodeIds] : [];
+  }
+
+  private syncReplicaModesFromNodes(nodes: NodeInfo[]): void {
+    const map = new Map<string, ReplicaSubMode>();
+    for (const node of nodes) {
+      if (node.role !== 'replica') {
+        continue;
+      }
+      const mode = node.subMode ?? 'delivery';
+      map.set(node.nodeId, mode);
+    }
+    this.replicaModes.set(map);
+  }
+
+  private isVolumeEligibleNode(node: NodeInfo): boolean {
+    if (node.role === 'master') {
+      return true;
+    }
+    if (node.role !== 'replica') {
+      return false;
+    }
+    return this.getReplicaMode(node.nodeId) === 'volume';
   }
 
   private async persistBackupPolicy(externalTargets: ExternalBackupTarget[]): Promise<void> {
@@ -1755,6 +1885,35 @@ export class AppComponent {
       if (mode && mode !== 'backup') {
         return 'Slave scope requires node in slave-backup mode';
       }
+    }
+    return null;
+  }
+
+  private validateBackupWizardStep(step: number): string | null {
+    if (step === 0 && this.backupScope() === 'replica' && !this.backupNodeId().trim()) {
+      return 'Select a slave node for slave scope';
+    }
+    if (step === 1) {
+      if (!this.backupSourceBucketName().trim()) {
+        return 'Source bucket is required';
+      }
+      if (!this.backupTargetBucketName().trim()) {
+        return 'Backup bucket is required';
+      }
+    }
+    if (step === 2) {
+      if (!this.backupName().trim()) {
+        return 'Backup policy name is required';
+      }
+      if (this.backupRetention() < 1) {
+        return 'Backup retention must be at least 1';
+      }
+    }
+    if (step === this.backupWizardSteps.length - 1) {
+      if (this.parseExternalTargets(this.backupExternalTargets()) === null) {
+        return 'External targets must be valid JSON';
+      }
+      return this.validateBackupPolicyForm();
     }
     return null;
   }
@@ -1941,6 +2100,11 @@ export class AppComponent {
     this.backupPolicies.set([]);
     this.backupRuns.set([]);
     this.replicaModes.set(new Map());
+    this.volumeBucketName.set('');
+    this.selectedVolumeNodeIds.set([]);
+    this.backupWizardOpen.set(false);
+    this.backupWizardStep.set(0);
+    this.externalTargetsExampleOpen.set(false);
     this.editingSnapshotPolicyId.set('');
     this.editingBackupPolicyId.set('');
     this.newUsername.set('');

@@ -124,6 +124,46 @@
           </mat-slide-toggle>
           <button mat-raised-button color="primary" (click)="app.handleSetBucketWorm()">Apply WORM</button>
         </section>
+
+        <section class="storage-section" data-testid="volume-binding-section">
+          <h3>Bucket to volume binding</h3>
+          <p class="storage-help-note">
+            Bind bucket writes to master and slave-volume nodes. Max available space uses online bound volumes.
+          </p>
+          <mat-form-field appearance="outline">
+            <mat-label>Volume binding bucket</mat-label>
+            <mat-select
+              [value]="app.volumeBucketName()"
+              (selectionChange)="app.handleSelectVolumeBucket($event.value)"
+            >
+              @for (bucket of app.buckets(); track app.trackBucket($index, bucket)) {
+                <mat-option [value]="bucket.name">{{ bucket.name }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+
+          <mat-form-field appearance="outline">
+            <mat-label>Volume nodes</mat-label>
+            <mat-select
+              multiple
+              [value]="app.selectedVolumeNodeIds()"
+              (selectionChange)="app.handleVolumeNodeSelection($event.value)"
+            >
+              @for (node of app.volumeEligibleNodes(); track app.trackNode($index, node)) {
+                <mat-option [value]="node.nodeId">
+                  {{ node.addressInternal }} ({{ node.role }}{{ node.subMode ? ('/' + node.subMode) : '' }})
+                </mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+          <p class="storage-help-note">
+            Max available for selected bucket:
+            <strong>{{ app.formatBytes(app.selectedVolumeBucketMaxAvailable()) }}</strong>
+          </p>
+          <button mat-raised-button color="primary" (click)="app.handleSetBucketVolumes()">
+            Apply volume binding
+          </button>
+        </section>
       </div>
     </mat-tab>
 
@@ -248,6 +288,14 @@
       <div class="tab-panel">
         <section class="storage-section" data-testid="backup-policy-section">
           <h3>Backups</h3>
+          <div class="row">
+            <button mat-raised-button color="primary" (click)="app.openBackupWizard()">
+              Open backup wizard
+            </button>
+            <button mat-stroked-button (click)="app.handleShowExternalTargetsExample()">
+              Show external target example
+            </button>
+          </div>
 
           <mat-form-field appearance="outline">
             <mat-label>Policy name</mat-label>
@@ -411,7 +459,7 @@
                       mat-icon-button
                       title="Edit policy"
                       aria-label="Edit policy"
-                      (click)="app.editBackupPolicy(policy)"
+                      (click)="app.openBackupWizard(policy)"
                     >
                       <i class="fa-solid fa-pen"></i>
                     </button>
@@ -424,6 +472,180 @@
             </div>
           }
         </section>
+
+        @if (app.backupWizardOpen()) {
+          <div class="modal-backdrop" (click)="app.closeBackupWizard()">
+            <div class="settings-modal backup-wizard-modal" (click)="$event.stopPropagation()">
+              <h3>Backup policy wizard</h3>
+              <p class="storage-help-note">
+                Step {{ app.backupWizardStep() + 1 }} / {{ app.backupWizardSteps.length }}:
+                {{ app.backupWizardSteps[app.backupWizardStep()] }}
+              </p>
+
+              @if (app.backupWizardStep() === 0) {
+                <div class="stack">
+                  <mat-form-field appearance="outline">
+                    <mat-label>Scope</mat-label>
+                    <mat-select [value]="app.backupScope()" (selectionChange)="app.backupScope.set($event.value)">
+                      <mat-option value="master">master</mat-option>
+                      <mat-option value="replica">slave</mat-option>
+                    </mat-select>
+                  </mat-form-field>
+                  <mat-form-field appearance="outline">
+                    <mat-label>Slave node</mat-label>
+                    <mat-select
+                      [value]="app.backupNodeId()"
+                      [disabled]="app.backupScope() !== 'replica'"
+                      (selectionChange)="app.backupNodeId.set($event.value)"
+                    >
+                      @for (node of app.replicaNodes(); track app.trackNode($index, node)) {
+                        <mat-option [value]="node.nodeId">
+                          {{ node.addressInternal }} ({{ app.getReplicaMode(node.nodeId) }})
+                        </mat-option>
+                      }
+                    </mat-select>
+                  </mat-form-field>
+                </div>
+              }
+
+              @if (app.backupWizardStep() === 1) {
+                <div class="stack">
+                  <mat-form-field appearance="outline">
+                    <mat-label>Source bucket</mat-label>
+                    <mat-select
+                      [value]="app.backupSourceBucketName()"
+                      (selectionChange)="app.backupSourceBucketName.set($event.value)"
+                    >
+                      @for (bucket of app.buckets(); track app.trackBucket($index, bucket)) {
+                        <mat-option [value]="bucket.name">{{ bucket.name }}</mat-option>
+                      }
+                    </mat-select>
+                  </mat-form-field>
+                  <mat-form-field appearance="outline">
+                    <mat-label>Backup bucket</mat-label>
+                    <mat-select
+                      [value]="app.backupTargetBucketName()"
+                      (selectionChange)="app.backupTargetBucketName.set($event.value)"
+                    >
+                      @for (bucket of app.buckets(); track app.trackBucket($index, bucket)) {
+                        <mat-option [value]="bucket.name">{{ bucket.name }}</mat-option>
+                      }
+                    </mat-select>
+                  </mat-form-field>
+                </div>
+              }
+
+              @if (app.backupWizardStep() === 2) {
+                <div class="stack">
+                  <mat-form-field appearance="outline">
+                    <mat-label>Policy name</mat-label>
+                    <input matInput [value]="app.backupName()" #wizardName (input)="app.backupName.set(wizardName.value)" />
+                  </mat-form-field>
+                  <div class="storage-inline-grid">
+                    <mat-form-field appearance="outline">
+                      <mat-label>Type</mat-label>
+                      <mat-select [value]="app.backupType()" (selectionChange)="app.backupType.set($event.value)">
+                        @for (type of app.backupTypeOptions; track type) {
+                          <mat-option [value]="type">{{ type }}</mat-option>
+                        }
+                      </mat-select>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                      <mat-label>Schedule</mat-label>
+                      <mat-select [value]="app.backupSchedule()" (selectionChange)="app.backupSchedule.set($event.value)">
+                        @for (schedule of app.backupScheduleOptions; track schedule) {
+                          <mat-option [value]="schedule">{{ schedule }}</mat-option>
+                        }
+                      </mat-select>
+                    </mat-form-field>
+                  </div>
+                  <div class="storage-inline-grid">
+                    <mat-form-field appearance="outline">
+                      <mat-label>Strategy</mat-label>
+                      <mat-select [value]="app.backupStrategy()" (selectionChange)="app.backupStrategy.set($event.value)">
+                        @for (strategy of app.backupStrategyOptions; track strategy) {
+                          <mat-option [value]="strategy">{{ strategy }}</mat-option>
+                        }
+                      </mat-select>
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                      <mat-label>Retention</mat-label>
+                      <input
+                        matInput
+                        type="number"
+                        min="1"
+                        [value]="app.backupRetention()"
+                        #wizardRetention
+                        (input)="app.setBackupRetention(wizardRetention.value)"
+                      />
+                    </mat-form-field>
+                  </div>
+                </div>
+              }
+
+              @if (app.backupWizardStep() === 3) {
+                <div class="stack">
+                  <mat-slide-toggle
+                    color="primary"
+                    [checked]="app.backupEnabled()"
+                    (change)="app.backupEnabled.set($event.checked)"
+                  >
+                    Enable backup policy
+                  </mat-slide-toggle>
+                  <mat-form-field appearance="outline" class="full-width">
+                    <mat-label>External targets JSON</mat-label>
+                    <textarea
+                      matInput
+                      rows="8"
+                      [value]="app.backupExternalTargets()"
+                      #wizardExternalTargets
+                      (input)="app.backupExternalTargets.set(wizardExternalTargets.value)"
+                    ></textarea>
+                  </mat-form-field>
+                  <div class="row">
+                    <button mat-stroked-button (click)="app.handleShowExternalTargetsExample()">Show example</button>
+                    <button mat-stroked-button (click)="app.handleTestExternalTargets()">Test remote targets</button>
+                  </div>
+                </div>
+              }
+
+              <div class="row">
+                <button
+                  mat-stroked-button
+                  (click)="app.previousBackupWizardStep()"
+                  [disabled]="app.backupWizardStep() === 0"
+                >
+                  Previous
+                </button>
+                @if (app.backupWizardStep() < app.backupWizardSteps.length - 1) {
+                  <button mat-raised-button color="primary" (click)="app.nextBackupWizardStep()">Next</button>
+                }
+                @if (app.backupWizardStep() === app.backupWizardSteps.length - 1) {
+                  <button mat-raised-button color="primary" (click)="app.saveBackupWizard()">
+                    Save policy
+                  </button>
+                }
+                <button mat-stroked-button (click)="app.closeBackupWizard()">Close</button>
+              </div>
+            </div>
+          </div>
+        }
+
+        @if (app.externalTargetsExampleOpen()) {
+          <div class="modal-backdrop" (click)="app.closeExternalTargetsExample()">
+            <div class="settings-modal backup-example-modal" (click)="$event.stopPropagation()">
+              <h3>External targets JSON example</h3>
+              <p class="storage-help-note">Includes `s3`, `sftp`, and `ssh` gateway target templates.</p>
+              <pre class="json-example">{{ app.backupExternalTargetsExample }}</pre>
+              <div class="row">
+                <button mat-raised-button color="primary" (click)="app.applyExternalTargetsExample()">
+                  Use this example
+                </button>
+                <button mat-stroked-button (click)="app.closeExternalTargetsExample()">Close</button>
+              </div>
+            </div>
+          </div>
+        }
 
         <section class="storage-section" data-testid="backup-runs-section">
           <h3>Backup runs</h3>

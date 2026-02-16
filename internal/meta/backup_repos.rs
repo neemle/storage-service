@@ -1,6 +1,6 @@
 use crate::meta::models::{
     BackupPolicy, BackupRun, Bucket, BucketSnapshot, BucketSnapshotObject, BucketSnapshotPolicy,
-    Node, ReplicaRuntimeConfig,
+    BucketVolumeBinding, Node, ReplicaRuntimeConfig,
 };
 use crate::meta::repos::Repo;
 use chrono::{DateTime, Utc};
@@ -127,6 +127,46 @@ impl Repo {
             .bind(bucket_id)
             .execute(self.pool())
             .await?;
+        Ok(())
+    }
+
+    pub async fn list_bucket_volume_bindings(
+        &self,
+        bucket_id: Uuid,
+    ) -> Result<Vec<BucketVolumeBinding>, sqlx::Error> {
+        sqlx::query_as::<_, BucketVolumeBinding>(
+            "SELECT * FROM bucket_volume_bindings WHERE bucket_id=$1 ORDER BY node_id",
+        )
+        .bind(bucket_id)
+        .fetch_all(self.pool())
+        .await
+    }
+
+    pub async fn list_bucket_volume_bindings_all(
+        &self,
+    ) -> Result<Vec<BucketVolumeBinding>, sqlx::Error> {
+        sqlx::query_as::<_, BucketVolumeBinding>(
+            "SELECT * FROM bucket_volume_bindings ORDER BY bucket_id, node_id",
+        )
+        .fetch_all(self.pool())
+        .await
+    }
+
+    pub async fn replace_bucket_volume_bindings(
+        &self,
+        bucket_id: Uuid,
+        node_ids: &[Uuid],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool().begin().await?;
+        sqlx::query("DELETE FROM bucket_volume_bindings WHERE bucket_id=$1")
+            .bind(bucket_id)
+            .execute(&mut *tx)
+            .await?;
+        let now = Utc::now();
+        for node_id in sorted_unique_node_ids(node_ids) {
+            insert_bucket_volume_binding(&mut tx, bucket_id, node_id, now).await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -753,6 +793,40 @@ impl Repo {
         .fetch_optional(self.pool())
         .await
     }
+
+    pub async fn list_replica_runtime_modes(
+        &self,
+    ) -> Result<Vec<ReplicaRuntimeConfig>, sqlx::Error> {
+        sqlx::query_as::<_, ReplicaRuntimeConfig>(
+            "SELECT * FROM replica_runtime_config ORDER BY node_id",
+        )
+        .fetch_all(self.pool())
+        .await
+    }
+}
+
+fn sorted_unique_node_ids(node_ids: &[Uuid]) -> Vec<Uuid> {
+    let mut values = node_ids.to_vec();
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+async fn insert_bucket_volume_binding(
+    tx: &mut Transaction<'_, Postgres>,
+    bucket_id: Uuid,
+    node_id: Uuid,
+    created_at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO bucket_volume_bindings (bucket_id, node_id, created_at) VALUES ($1,$2,$3)",
+    )
+    .bind(bucket_id)
+    .bind(node_id)
+    .bind(created_at)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -796,6 +870,26 @@ mod tests {
         )
         .await
         .expect("version");
+    }
+
+    async fn seed_binding_target(
+        repo: &Repo,
+        bucket_name: &str,
+    ) -> (crate::meta::models::Bucket, Uuid) {
+        let bucket = seed_bucket(repo, bucket_name).await;
+        let node_id = Uuid::new_v4();
+        repo.upsert_node(
+            node_id,
+            "replica",
+            "http://binding-node:9010",
+            "online",
+            None,
+            None,
+            Some(Utc::now()),
+        )
+        .await
+        .expect("node");
+        (bucket, node_id)
     }
 
     #[tokio::test]
@@ -910,6 +1004,89 @@ mod tests {
             .expect("lookup")
             .expect("exists");
         assert_eq!(loaded.sub_mode, "backup");
+        let runtime_rows = repo
+            .list_replica_runtime_modes()
+            .await
+            .expect("list runtime modes");
+        assert_eq!(runtime_rows.len(), 1);
+
+        repo.replace_bucket_volume_bindings(source.id, &[node_id, node_id])
+            .await
+            .expect("bind");
+        let bindings = repo
+            .list_bucket_volume_bindings(source.id)
+            .await
+            .expect("list bucket bindings");
+        assert_eq!(bindings.len(), 1);
+        let all_bindings = repo
+            .list_bucket_volume_bindings_all()
+            .await
+            .expect("list all bindings");
+        assert_eq!(all_bindings.len(), 1);
+
+        repo.replace_bucket_volume_bindings(source.id, &[])
+            .await
+            .expect("clear bind");
+        let cleared = repo
+            .list_bucket_volume_bindings(source.id)
+            .await
+            .expect("list cleared");
+        assert!(cleared.is_empty());
+    }
+
+    #[tokio::test]
+    async fn replace_bucket_volume_bindings_reports_begin_error() {
+        let repo = test_support::broken_repo();
+        assert!(repo
+            .replace_bucket_volume_bindings(Uuid::new_v4(), &[])
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn replace_bucket_volume_bindings_reports_delete_error() {
+        let repo = setup_repo().await;
+        let (bucket, _node_id) = seed_binding_target(&repo, "binding-delete-error").await;
+        let pool = repo.pool().clone();
+        let guard = TableRenameGuard::rename(&pool, "bucket_volume_bindings")
+            .await
+            .expect("rename");
+        assert!(repo
+            .replace_bucket_volume_bindings(bucket.id, &[])
+            .await
+            .is_err());
+        guard.restore().await.expect("restore");
+    }
+
+    #[tokio::test]
+    async fn replace_bucket_volume_bindings_reports_insert_error() {
+        let repo = setup_repo().await;
+        let (bucket, node_id) = seed_binding_target(&repo, "binding-insert-error").await;
+        let pool = repo.pool().clone();
+        let trigger = FailTriggerGuard::create(&pool, "bucket_volume_bindings", "BEFORE", "INSERT")
+            .await
+            .expect("trigger");
+        assert!(repo
+            .replace_bucket_volume_bindings(bucket.id, &[node_id])
+            .await
+            .is_err());
+        trigger.remove().await.expect("remove");
+    }
+
+    #[tokio::test]
+    async fn replace_bucket_volume_bindings_reports_commit_error() {
+        let repo = setup_repo().await;
+        let (bucket, node_id) = seed_binding_target(&repo, "binding-commit-error").await;
+        let pool = repo.pool().clone();
+        let trigger =
+            FailTriggerGuard::create_deferred(&pool, "bucket_volume_bindings", "AFTER", "INSERT")
+                .await
+                .expect("trigger");
+        assert!(repo
+            .replace_bucket_volume_bindings(bucket.id, &[node_id])
+            .await
+            .is_err());
+        trigger.remove().await.expect("remove");
     }
 
     #[tokio::test]

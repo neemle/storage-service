@@ -155,7 +155,9 @@ function registerBucketValidatorTests(): void {
       createdAt: '2026-02-12T00:00:00Z',
       versioningStatus: 'enabled',
       publicRead: false,
-      isWorm: false
+      isWorm: false,
+      boundNodeIds: ['node-1'],
+      maxAvailableBytes: 1024
     };
     const invalid = { ...valid, versioningStatus: 'unknown' };
     expect(isBucket(valid)).toBe(true);

@@ -133,6 +133,8 @@ describe('api integration', () => {
   registerLogoutTest();
   registerListObjectsTest();
   registerStorageAdminApiTests();
+  registerBucketVolumeBindingApiTests();
+  registerListBucketsApiTests();
   registerBucketUpdateTests();
   registerReplicaModeApiTests();
   registerReplicaModeAliasApiTest();
@@ -233,6 +235,45 @@ function registerStorageAdminApiTests(): void {
     const calls = prepareStorageAdminFetch();
     const result = await executeStorageAdminScenario(calls);
     assertStorageAdminScenario(calls, result);
+  });
+}
+
+function registerBucketVolumeBindingApiTests(): void {
+  test('updateBucketVolumes sends selected node ids', async () => {
+    const calls: FetchCall[] = [];
+    globalThis.fetch = createFetchStub(calls, [{ status: 204, body: null }]);
+
+    const api = await import('../../src/api');
+    await api.updateBucketVolumes('bucket-a', ['node-1', 'node-2']);
+
+    expect(calls[0].url).toBe('http://ui-api.local/admin/v1/storage/buckets/bucket-a/volumes');
+    expect(calls[0].init?.method).toBe('PATCH');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ nodeIds: ['node-1', 'node-2'] });
+  });
+}
+
+function registerListBucketsApiTests(): void {
+  test('listBuckets validates max available and bound node fields', async () => {
+    const calls: FetchCall[] = [];
+    const bucket = {
+      id: 'bucket-1',
+      name: 'private-a',
+      createdAt: '2026-02-12T00:00:00Z',
+      versioningStatus: 'off',
+      publicRead: false,
+      isWorm: false,
+      boundNodeIds: ['master-1', 'node-v1'],
+      maxAvailableBytes: 4096
+    };
+    globalThis.fetch = createFetchStub(calls, [{ status: 200, body: JSON.stringify([bucket]) }]);
+
+    const api = await import('../../src/api');
+    const items = await api.listBuckets();
+
+    expect(items).toHaveLength(1);
+    expect(items[0].boundNodeIds).toEqual(['master-1', 'node-v1']);
+    expect(items[0].maxAvailableBytes).toBe(4096);
+    expect(calls[0].url).toBe('http://ui-api.local/console/v1/buckets');
   });
 }
 

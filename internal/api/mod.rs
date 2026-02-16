@@ -22,6 +22,7 @@ pub mod internal;
 pub mod master;
 pub mod portal;
 pub mod replica;
+pub mod volume_capacity;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -312,18 +313,24 @@ async fn insert_local_node(repo: &Repo, config: &Config, address: &str) -> Resul
     } else {
         "replica"
     };
+    let (capacity_bytes, free_bytes) = local_node_capacity(config);
     repo.upsert_node(
         node_id,
         role,
         address,
         "online",
-        None,
-        None,
+        capacity_bytes,
+        free_bytes,
         Some(chrono::Utc::now()),
     )
     .await
     .map_err(|err| format!("node insert failed: {err}"))?;
     Ok(node_id)
+}
+
+fn local_node_capacity(config: &Config) -> (Option<i64>, Option<i64>) {
+    let usage = crate::util::storage_volume::data_dirs_usage(&config.data_dirs);
+    (Some(usage.capacity_bytes), Some(usage.free_bytes))
 }
 
 impl Clone for Repo {

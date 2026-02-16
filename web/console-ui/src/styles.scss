@@ -354,6 +354,23 @@ body {
   box-shadow: 0 25px 50px rgba(0,0,0,0.25);
   overflow: hidden;
 }
+.backup-wizard-modal,
+.backup-example-modal {
+  max-width: 760px;
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+.json-example {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  background: var(--c-surface-hover);
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.45;
+}
 .settings-header {
   display: flex;
   justify-content: space-between;

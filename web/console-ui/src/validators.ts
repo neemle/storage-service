@@ -61,6 +61,20 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return true;
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isString);
+}
+
+function isNullableReplicaSubMode(value: unknown): value is 'delivery' | 'backup' | 'volume' | null | undefined {
+  return (
+    value === undefined ||
+    value === null ||
+    value === 'delivery' ||
+    value === 'backup' ||
+    value === 'volume'
+  );
+}
+
 export function isUser(value: unknown): value is User {
   if (!isRecord(value)) {
     return false;
@@ -97,7 +111,9 @@ export function isBucket(value: unknown): value is Bucket {
     isString(value['createdAt']) &&
     isBucketVersioningStatus(value['versioningStatus']) &&
     isBoolean(value['publicRead']) &&
-    isBoolean(value['isWorm'])
+    isBoolean(value['isWorm']) &&
+    isStringArray(value['boundNodeIds']) &&
+    isNumber(value['maxAvailableBytes'])
   );
 }
 
@@ -259,7 +275,8 @@ export function isNodeInfo(value: unknown): value is NodeInfo {
     isString(value['status']) &&
     isNullableString(value['lastHeartbeatAt']) &&
     isNullableNumber(value['capacityBytes']) &&
-    isNullableNumber(value['freeBytes'])
+    isNullableNumber(value['freeBytes']) &&
+    isNullableReplicaSubMode(value['subMode'])
   );
 }
 

@@ -44,6 +44,13 @@ pub struct Bucket {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct BucketVolumeBinding {
+    pub bucket_id: Uuid,
+    pub node_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ObjectVersion {
     pub id: Uuid,
     pub bucket_id: Uuid,
