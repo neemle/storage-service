@@ -623,26 +623,226 @@
                           </mat-select>
                         </mat-form-field>
                       </div>
-                      <mat-form-field appearance="outline" class="full-width">
-                        <mat-label>Endpoint</mat-label>
-                        <input
-                          matInput
-                          [value]="target.endpoint"
-                          (input)="app.updateWizardTarget($index, 'endpoint', $any($event.target).value)"
-                        />
-                      </mat-form-field>
-                      <div class="storage-inline-grid">
-                        <mat-form-field appearance="outline">
-                          <mat-label>Method</mat-label>
-                          <mat-select
-                            [value]="target.method"
-                            (selectionChange)="app.updateWizardTarget($index, 'method', $event.value)"
-                          >
-                            <mat-option value="">default</mat-option>
-                            <mat-option value="PUT">PUT</mat-option>
-                            <mat-option value="POST">POST</mat-option>
-                          </mat-select>
+
+                      @if (target.kind === 's3') {
+                        <mat-form-field appearance="outline" class="full-width">
+                          <mat-label>S3 endpoint URL</mat-label>
+                          <input
+                            matInput
+                            placeholder="https://s3.amazonaws.com"
+                            [value]="target.endpoint"
+                            (input)="app.updateWizardTarget($index, 'endpoint', $any($event.target).value)"
+                          />
                         </mat-form-field>
+                        <div class="storage-inline-grid">
+                          <mat-form-field appearance="outline">
+                            <mat-label>Region</mat-label>
+                            <input
+                              matInput
+                              placeholder="us-east-1"
+                              [value]="target.region"
+                              (input)="app.updateWizardTarget($index, 'region', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                          <mat-form-field appearance="outline">
+                            <mat-label>Bucket name</mat-label>
+                            <input
+                              matInput
+                              [value]="target.bucketName"
+                              (input)="app.updateWizardTarget($index, 'bucketName', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                        </div>
+                        <div class="storage-inline-grid">
+                          <mat-form-field appearance="outline">
+                            <mat-label>Access Key ID</mat-label>
+                            <input
+                              matInput
+                              [value]="target.accessKeyId"
+                              (input)="app.updateWizardTarget($index, 'accessKeyId', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                          <mat-form-field appearance="outline">
+                            <mat-label>Secret Access Key</mat-label>
+                            <input
+                              matInput
+                              type="password"
+                              [value]="target.secretAccessKey"
+                              (input)="app.updateWizardTarget($index, 'secretAccessKey', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                        </div>
+                      }
+
+                      @if (target.kind === 'glacier') {
+                        <mat-form-field appearance="outline" class="full-width">
+                          <mat-label>Glacier endpoint URL</mat-label>
+                          <input
+                            matInput
+                            placeholder="https://glacier.us-east-1.amazonaws.com"
+                            [value]="target.endpoint"
+                            (input)="app.updateWizardTarget($index, 'endpoint', $any($event.target).value)"
+                          />
+                        </mat-form-field>
+                        <div class="storage-inline-grid">
+                          <mat-form-field appearance="outline">
+                            <mat-label>Region</mat-label>
+                            <input
+                              matInput
+                              placeholder="us-east-1"
+                              [value]="target.region"
+                              (input)="app.updateWizardTarget($index, 'region', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                          <mat-form-field appearance="outline">
+                            <mat-label>Vault name</mat-label>
+                            <input
+                              matInput
+                              [value]="target.vaultName"
+                              (input)="app.updateWizardTarget($index, 'vaultName', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                        </div>
+                        <div class="storage-inline-grid">
+                          <mat-form-field appearance="outline">
+                            <mat-label>Access Key ID</mat-label>
+                            <input
+                              matInput
+                              [value]="target.accessKeyId"
+                              (input)="app.updateWizardTarget($index, 'accessKeyId', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                          <mat-form-field appearance="outline">
+                            <mat-label>Secret Access Key</mat-label>
+                            <input
+                              matInput
+                              type="password"
+                              [value]="target.secretAccessKey"
+                              (input)="app.updateWizardTarget($index, 'secretAccessKey', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                        </div>
+                      }
+
+                      @if (target.kind === 'sftp' || target.kind === 'ssh') {
+                        <mat-form-field appearance="outline" class="full-width">
+                          <mat-label>{{ target.kind === 'sftp' ? 'SFTP' : 'SSH' }} endpoint</mat-label>
+                          <input
+                            matInput
+                            [placeholder]="target.kind + '://host:22/path'"
+                            [value]="target.endpoint"
+                            (input)="app.updateWizardTarget($index, 'endpoint', $any($event.target).value)"
+                          />
+                        </mat-form-field>
+                        <div class="storage-inline-grid">
+                          <mat-form-field appearance="outline">
+                            <mat-label>Username</mat-label>
+                            <input
+                              matInput
+                              [value]="target.username"
+                              (input)="app.updateWizardTarget($index, 'username', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                          <mat-form-field appearance="outline">
+                            <mat-label>Password</mat-label>
+                            <input
+                              matInput
+                              type="password"
+                              [value]="target.password"
+                              (input)="app.updateWizardTarget($index, 'password', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                        </div>
+                        <div class="storage-inline-grid">
+                          <mat-form-field appearance="outline">
+                            <mat-label>Method</mat-label>
+                            <mat-select
+                              [value]="target.method"
+                              (selectionChange)="app.updateWizardTarget($index, 'method', $event.value)"
+                            >
+                              <mat-option value="">default</mat-option>
+                              <mat-option value="PUT">PUT</mat-option>
+                              <mat-option value="POST">POST</mat-option>
+                            </mat-select>
+                          </mat-form-field>
+                          <mat-form-field appearance="outline">
+                            <mat-label>Timeout (s)</mat-label>
+                            <input
+                              matInput
+                              type="number"
+                              min="1"
+                              [value]="target.timeoutSeconds"
+                              (input)="app.updateWizardTarget($index, 'timeoutSeconds', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                        </div>
+                      }
+
+                      @if (target.kind === 'other') {
+                        <mat-form-field appearance="outline" class="full-width">
+                          <mat-label>Endpoint URL</mat-label>
+                          <input
+                            matInput
+                            [value]="target.endpoint"
+                            (input)="app.updateWizardTarget($index, 'endpoint', $any($event.target).value)"
+                          />
+                        </mat-form-field>
+                        <div class="storage-inline-grid">
+                          <mat-form-field appearance="outline">
+                            <mat-label>Method</mat-label>
+                            <mat-select
+                              [value]="target.method"
+                              (selectionChange)="app.updateWizardTarget($index, 'method', $event.value)"
+                            >
+                              <mat-option value="">default</mat-option>
+                              <mat-option value="PUT">PUT</mat-option>
+                              <mat-option value="POST">POST</mat-option>
+                            </mat-select>
+                          </mat-form-field>
+                          <mat-form-field appearance="outline">
+                            <mat-label>Timeout (s)</mat-label>
+                            <input
+                              matInput
+                              type="number"
+                              min="1"
+                              [value]="target.timeoutSeconds"
+                              (input)="app.updateWizardTarget($index, 'timeoutSeconds', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                        </div>
+                        <p class="storage-help-note" style="margin-top:8px">Headers</p>
+                        @for (header of target.headers; track app.trackHeader($index, header)) {
+                          <div class="header-row">
+                            <span class="header-label">{{ header.key }}: {{ header.value }}</span>
+                            <button mat-icon-button title="Remove header" (click)="app.removeHeaderFromTarget(target, $index)">
+                              <i class="fa-solid fa-xmark"></i>
+                            </button>
+                          </div>
+                        }
+                        <div class="storage-inline-grid">
+                          <mat-form-field appearance="outline">
+                            <mat-label>Header name</mat-label>
+                            <input
+                              matInput
+                              [value]="target.headerKey"
+                              (input)="app.updateWizardTarget($index, 'headerKey', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                          <mat-form-field appearance="outline">
+                            <mat-label>Header value</mat-label>
+                            <input
+                              matInput
+                              [value]="target.headerValue"
+                              (input)="app.updateWizardTarget($index, 'headerValue', $any($event.target).value)"
+                            />
+                          </mat-form-field>
+                        </div>
+                        <button mat-raised-button color="primary" (click)="app.addWizardTargetHeader($index)">
+                          Add header
+                        </button>
+                      }
+
+                      @if (target.kind === 's3' || target.kind === 'glacier') {
                         <mat-form-field appearance="outline">
                           <mat-label>Timeout (s)</mat-label>
                           <input
@@ -653,7 +853,8 @@
                             (input)="app.updateWizardTarget($index, 'timeoutSeconds', $any($event.target).value)"
                           />
                         </mat-form-field>
-                      </div>
+                      }
+
                       <mat-slide-toggle
                         color="primary"
                         [checked]="target.enabled"
@@ -661,42 +862,15 @@
                       >
                         Enabled
                       </mat-slide-toggle>
-
-                      <p class="storage-help-note" style="margin-top:8px">Headers</p>
-                      @for (header of target.headers; track app.trackHeader($index, header)) {
-                        <div class="header-row">
-                          <span class="header-label">{{ header.key }}: {{ header.value }}</span>
-                          <button mat-icon-button title="Remove header" (click)="app.removeHeaderFromTarget(target, $index)">
-                            <i class="fa-solid fa-xmark"></i>
-                          </button>
-                        </div>
-                      }
-                      <div class="storage-inline-grid">
-                        <mat-form-field appearance="outline">
-                          <mat-label>Header name</mat-label>
-                          <input
-                            matInput
-                            [value]="target.headerKey"
-                            (input)="app.updateWizardTarget($index, 'headerKey', $any($event.target).value)"
-                          />
-                        </mat-form-field>
-                        <mat-form-field appearance="outline">
-                          <mat-label>Header value</mat-label>
-                          <input
-                            matInput
-                            [value]="target.headerValue"
-                            (input)="app.updateWizardTarget($index, 'headerValue', $any($event.target).value)"
-                          />
-                        </mat-form-field>
-                      </div>
-                      <button mat-stroked-button (click)="app.addWizardTargetHeader($index)">Add header</button>
                     </div>
                   }
 
                   <div class="row">
-                    <button mat-stroked-button (click)="app.addWizardTarget()">Add target</button>
+                    <button mat-raised-button color="primary" (click)="app.addWizardTarget()">Add target</button>
                     <button mat-stroked-button (click)="app.handleShowExternalTargetsExample()">Load example</button>
-                    <button mat-stroked-button (click)="app.testWizardTargets()">Test remote targets</button>
+                    <button mat-raised-button color="primary" (click)="app.testWizardTargets()">
+                      Test remote targets
+                    </button>
                   </div>
                 </div>
               }

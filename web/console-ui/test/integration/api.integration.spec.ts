@@ -473,4 +473,37 @@ function registerBackupTargetConnectionTest(): void {
     expect(body.target.name).toBe('remote-1');
     expect(body.target.kind).toBe('s3');
   });
+
+  test('testBackupTargetConnection sends S3 credential fields', async () => {
+    const calls: FetchCall[] = [];
+    const queue: MockResponse[] = [
+      {
+        status: 200,
+        body: JSON.stringify({
+          ok: true,
+          message: 's3 endpoint reachable (status 200)'
+        })
+      }
+    ];
+    globalThis.fetch = createFetchStub(calls, queue);
+
+    const api = await import('../../src/api');
+    const result = await api.testBackupTargetConnection({
+      name: 'offsite-s3',
+      kind: 's3',
+      endpoint: 'https://s3.amazonaws.com',
+      enabled: true,
+      timeoutSeconds: 30,
+      accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+      secretAccessKey: 'wJalrXUtnFEMI/bPxRfiCYEXAMPLEKEY',
+      region: 'us-east-1',
+      bucketName: 'my-backup-bucket'
+    });
+
+    expect(result.ok).toBe(true);
+    const body = JSON.parse((calls[0].init?.body ?? '').toString());
+    expect(body.target.accessKeyId).toBe('AKIAIOSFODNN7EXAMPLE');
+    expect(body.target.region).toBe('us-east-1');
+    expect(body.target.bucketName).toBe('my-backup-bucket');
+  });
 }

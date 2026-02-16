@@ -73,6 +73,13 @@ export interface ExternalBackupTarget {
   method?: ExternalBackupTargetMethod;
   headers?: Record<string, string> | null;
   timeoutSeconds?: number;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  region?: string;
+  bucketName?: string;
+  vaultName?: string;
+  username?: string;
+  password?: string;
 }
 
 export interface BackupPolicy {

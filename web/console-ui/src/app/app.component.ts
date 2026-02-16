@@ -107,12 +107,21 @@ interface WizardTarget {
   headerValue: string;
   headers: Array<{ key: string; value: string }>;
   timeoutSeconds: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  region: string;
+  bucketName: string;
+  vaultName: string;
+  username: string;
+  password: string;
 }
 
 type WizardTargetScalarField =
   | 'name' | 'kind' | 'endpoint' | 'method'
   | 'enabled' | 'headerKey' | 'headerValue'
-  | 'timeoutSeconds';
+  | 'timeoutSeconds' | 'accessKeyId' | 'secretAccessKey'
+  | 'region' | 'bucketName' | 'vaultName'
+  | 'username' | 'password';
 
 interface AppSettings {
   theme: ThemeMode;
@@ -2037,7 +2046,14 @@ export class AppComponent {
       headerKey: '',
       headerValue: '',
       headers,
-      timeoutSeconds: t.timeoutSeconds !== undefined ? String(t.timeoutSeconds) : ''
+      timeoutSeconds: t.timeoutSeconds !== undefined ? String(t.timeoutSeconds) : '',
+      accessKeyId: t.accessKeyId ?? '',
+      secretAccessKey: t.secretAccessKey ?? '',
+      region: t.region ?? '',
+      bucketName: t.bucketName ?? '',
+      vaultName: t.vaultName ?? '',
+      username: t.username ?? '',
+      password: t.password ?? ''
     };
   }
 
@@ -2048,8 +2064,10 @@ export class AppComponent {
       endpoint: wt.endpoint.trim(),
       enabled: wt.enabled
     };
-    if (wt.method === 'PUT' || wt.method === 'POST') {
-      target.method = wt.method;
+    if (wt.kind === 'other' || wt.kind === 'sftp' || wt.kind === 'ssh') {
+      if (wt.method === 'PUT' || wt.method === 'POST') {
+        target.method = wt.method;
+      }
     }
     if (wt.headers.length > 0) {
       const headers: Record<string, string> = {};
@@ -2061,6 +2079,25 @@ export class AppComponent {
     const timeout = Number.parseInt(wt.timeoutSeconds, 10);
     if (!Number.isNaN(timeout) && timeout > 0) {
       target.timeoutSeconds = timeout;
+    }
+    if (wt.kind === 's3' || wt.kind === 'glacier') {
+      target.accessKeyId = wt.accessKeyId.trim();
+      target.secretAccessKey = wt.secretAccessKey.trim();
+      target.region = wt.region.trim();
+    }
+    if (wt.kind === 's3') {
+      target.bucketName = wt.bucketName.trim();
+    }
+    if (wt.kind === 'glacier') {
+      target.vaultName = wt.vaultName.trim();
+    }
+    if (wt.kind === 'sftp' || wt.kind === 'ssh') {
+      if (wt.username.trim()) {
+        target.username = wt.username.trim();
+      }
+      if (wt.password.trim()) {
+        target.password = wt.password.trim();
+      }
     }
     return target;
   }
@@ -2075,7 +2112,14 @@ export class AppComponent {
       headerKey: '',
       headerValue: '',
       headers: [],
-      timeoutSeconds: '20'
+      timeoutSeconds: '20',
+      accessKeyId: '',
+      secretAccessKey: '',
+      region: '',
+      bucketName: '',
+      vaultName: '',
+      username: '',
+      password: ''
     };
   }
 

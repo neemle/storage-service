@@ -179,6 +179,26 @@ function registerExternalTargetValidatorTests(): void {
     expect(isExternalBackupTargetArray(invalidTargets)).toBe(false);
     expect(isBackupTargetTestResponse(invalidReply)).toBe(false);
   });
+
+  test('external target validators accept S3 kind-specific fields', () => {
+    const targets = [buildS3ExternalTarget()];
+    expect(isExternalBackupTargetArray(targets)).toBe(true);
+  });
+
+  test('external target validators accept glacier kind-specific fields', () => {
+    const targets = [buildGlacierExternalTarget()];
+    expect(isExternalBackupTargetArray(targets)).toBe(true);
+  });
+
+  test('external target validators accept sftp with credentials', () => {
+    const targets = [buildSftpExternalTarget()];
+    expect(isExternalBackupTargetArray(targets)).toBe(true);
+  });
+
+  test('external target validators reject non-string credential fields', () => {
+    const targets = [{ ...buildS3ExternalTarget(), accessKeyId: 42 }];
+    expect(isExternalBackupTargetArray(targets)).toBe(false);
+  });
 }
 
 function registerReplicaModeValidatorTests(): void {
@@ -320,5 +340,45 @@ function buildBackupRun(): Record<string, unknown> {
     error_text: null,
     started_at: '2026-02-12T00:00:00Z',
     completed_at: '2026-02-12T00:01:00Z'
+  };
+}
+
+function buildS3ExternalTarget(): Record<string, unknown> {
+  return {
+    name: 'offsite-s3',
+    kind: 's3',
+    endpoint: 'https://s3.amazonaws.com',
+    enabled: true,
+    timeoutSeconds: 30,
+    accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+    secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    region: 'us-east-1',
+    bucketName: 'my-backup-bucket'
+  };
+}
+
+function buildGlacierExternalTarget(): Record<string, unknown> {
+  return {
+    name: 'archive-glacier',
+    kind: 'glacier',
+    endpoint: 'https://glacier.us-east-1.amazonaws.com',
+    enabled: true,
+    timeoutSeconds: 60,
+    accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+    secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    region: 'us-east-1',
+    vaultName: 'my-archive-vault'
+  };
+}
+
+function buildSftpExternalTarget(): Record<string, unknown> {
+  return {
+    name: 'sftp-target',
+    kind: 'sftp',
+    endpoint: 'sftp://backup.example.com:22/backups',
+    enabled: true,
+    timeoutSeconds: 15,
+    username: 'backup-user',
+    password: 's3cret'
   };
 }

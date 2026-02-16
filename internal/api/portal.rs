@@ -204,8 +204,8 @@ fn content_type_for(path: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        accepts_encoding, client_accepts_gzip, content_type_for, embedded_ui, embedded_ui_with_dir,
-        get_embedded_asset, parse_quality, router,
+        accepts_encoding, build_cors, client_accepts_gzip, content_type_for, embedded_ui,
+        embedded_ui_with_dir, encoding_allowed, get_embedded_asset, parse_quality, router,
     };
     use crate::test_support;
     use axum::body::Body;
@@ -500,5 +500,35 @@ mod tests {
         );
         assert_eq!(content_type_for("noext"), "application/octet-stream");
         assert_eq!(content_type_for(""), "application/octet-stream");
+    }
+
+    #[test]
+    fn parse_quality_returns_none_for_unparseable_float() {
+        assert_eq!(parse_quality("q=abc"), None);
+        assert_eq!(parse_quality("q="), None);
+    }
+
+    #[test]
+    fn encoding_allowed_accepts_token_without_quality() {
+        assert!(encoding_allowed(" gzip ", "gzip"));
+    }
+
+    #[test]
+    fn encoding_allowed_rejects_mismatched_token() {
+        assert!(!encoding_allowed("br;q=1.0", "gzip"));
+    }
+
+    #[test]
+    fn accepts_encoding_allows_token_with_unparseable_quality() {
+        assert!(accepts_encoding("gzip;q=abc", "gzip"));
+    }
+
+    #[test]
+    fn build_cors_filters_invalid_origins() {
+        let origins = vec![
+            "https://valid.example.com".to_string(),
+            "invalid\x01origin".to_string(),
+        ];
+        let _ = build_cors(&origins);
     }
 }

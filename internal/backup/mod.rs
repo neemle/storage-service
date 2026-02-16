@@ -4,10 +4,12 @@ use crate::storage::checksum::{Checksum, ChecksumAlgo};
 use chrono::{DateTime, Duration, Utc};
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use hmac::{Hmac, Mac};
 use md5::{Digest, Md5};
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::Sha256;
 use std::collections::{BTreeMap, HashSet};
 use std::io::{self, Write};
 #[cfg(test)]
@@ -147,6 +149,20 @@ pub struct ExternalBackupTarget {
     pub headers: Option<BTreeMap<String, String>>,
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_key_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_access_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bucket_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
 }
 
 impl ExternalBackupTarget {
@@ -185,7 +201,10 @@ pub async fn test_external_target_connection(
             }
             test_http_target(target).await
         }
-        ExternalTargetKind::S3 | ExternalTargetKind::Glacier | ExternalTargetKind::Other => {
+        ExternalTargetKind::S3 | ExternalTargetKind::Glacier => {
+            test_s3_target(target).await
+        }
+        ExternalTargetKind::Other => {
             test_http_target(target).await
         }
     }
@@ -211,7 +230,37 @@ fn validate_external_target(target: &ExternalBackupTarget) -> Result<(), String>
     validate_target_scheme(target, &endpoint)?;
     validate_target_method(target)?;
     validate_target_timeout(target)?;
+    validate_kind_specific_fields(target)?;
     Ok(())
+}
+
+fn validate_kind_specific_fields(target: &ExternalBackupTarget) -> Result<(), String> {
+    match target.kind {
+        ExternalTargetKind::S3 => {
+            require_field(&target.access_key_id, "s3 target requires accessKeyId")?;
+            require_field(&target.secret_access_key, "s3 target requires secretAccessKey")?;
+            require_field(&target.region, "s3 target requires region")?;
+            require_field(&target.bucket_name, "s3 target requires bucketName")?;
+        }
+        ExternalTargetKind::Glacier => {
+            require_field(&target.access_key_id, "glacier target requires accessKeyId")?;
+            require_field(
+                &target.secret_access_key,
+                "glacier target requires secretAccessKey",
+            )?;
+            require_field(&target.region, "glacier target requires region")?;
+            require_field(&target.vault_name, "glacier target requires vaultName")?;
+        }
+        ExternalTargetKind::Sftp | ExternalTargetKind::Ssh | ExternalTargetKind::Other => {}
+    }
+    Ok(())
+}
+
+fn require_field(value: &Option<String>, message: &str) -> Result<(), String> {
+    match value {
+        Some(v) if !v.trim().is_empty() => Ok(()),
+        _ => Err(message.to_string()),
+    }
 }
 
 fn validate_target_scheme(
@@ -283,6 +332,63 @@ async fn test_ssh_target(target: &ExternalBackupTarget) -> Result<String, String
     let address = format!("{host}:{port}");
     run_ssh_connect(target.timeout_seconds(), address).await?;
     Ok("ssh endpoint reachable".into())
+}
+
+async fn test_s3_target(target: &ExternalBackupTarget) -> Result<String, String> {
+    let access_key = target.access_key_id.as_deref().unwrap_or_default();
+    let secret_key = target.secret_access_key.as_deref().unwrap_or_default();
+    let region = target.region.as_deref().unwrap_or_default();
+    let bucket = match target.kind {
+        ExternalTargetKind::Glacier => target.vault_name.as_deref().unwrap_or_default(),
+        _ => target.bucket_name.as_deref().unwrap_or_default(),
+    };
+    let service = match target.kind {
+        ExternalTargetKind::Glacier => "glacier",
+        _ => "s3",
+    };
+    let base = target.endpoint.trim_end_matches('/');
+    let url_str = format!("{base}/{bucket}/");
+    let parsed = parse_target_url(&url_str)?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "s3 endpoint missing host".to_string())?
+        .to_string();
+    let uri_path = parsed.path().to_string();
+    let now = Utc::now();
+    let payload_hash = hex_sha256(b"");
+    let auth_header = build_sigv4_authorization(
+        "HEAD",
+        &uri_path,
+        &host,
+        "",
+        &payload_hash,
+        access_key,
+        secret_key,
+        region,
+        service,
+        now,
+    );
+    let date_stamp = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let client = build_http_client(target.timeout_seconds())?;
+    let response = client
+        .head(parsed)
+        .header("Host", &host)
+        .header("x-amz-date", &date_stamp)
+        .header("x-amz-content-sha256", &payload_hash)
+        .header("Authorization", &auth_header)
+        .send()
+        .await
+        .map_err(|err| format!("s3 connectivity check failed: {err}"))?;
+    if response.status().is_server_error() {
+        return Err(format!(
+            "s3 endpoint returned server error status {}",
+            response.status()
+        ));
+    }
+    Ok(format!(
+        "s3 endpoint reachable (status {})",
+        response.status()
+    ))
 }
 
 async fn test_http_target(target: &ExternalBackupTarget) -> Result<String, String> {
@@ -667,10 +773,147 @@ async fn upload_external_target(
             }
             upload_http_target(target, object_key, bytes, content_type).await
         }
-        ExternalTargetKind::S3 | ExternalTargetKind::Glacier | ExternalTargetKind::Other => {
+        ExternalTargetKind::S3 => {
+            upload_s3_target(target, object_key, bytes, content_type).await
+        }
+        ExternalTargetKind::Glacier => {
+            upload_s3_target(target, object_key, bytes, content_type).await
+        }
+        ExternalTargetKind::Other => {
             upload_http_target(target, object_key, bytes, content_type).await
         }
     }
+}
+
+async fn upload_s3_target(
+    target: &ExternalBackupTarget,
+    object_key: &str,
+    bytes: &[u8],
+    content_type: &str,
+) -> Result<(), String> {
+    let access_key = target.access_key_id.as_deref().unwrap_or_default();
+    let secret_key = target.secret_access_key.as_deref().unwrap_or_default();
+    let region = target.region.as_deref().unwrap_or_default();
+    let bucket = match target.kind {
+        ExternalTargetKind::Glacier => target.vault_name.as_deref().unwrap_or_default(),
+        _ => target.bucket_name.as_deref().unwrap_or_default(),
+    };
+    let service = match target.kind {
+        ExternalTargetKind::Glacier => "glacier",
+        _ => "s3",
+    };
+    let s3_url = build_s3_object_url(&target.endpoint, bucket, object_key)?;
+    let parsed = parse_target_url(&s3_url)?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "s3 endpoint missing host".to_string())?
+        .to_string();
+    let uri_path = parsed.path().to_string();
+    let now = Utc::now();
+    let payload_hash = hex_sha256(bytes);
+    let auth_header = build_sigv4_authorization(
+        "PUT",
+        &uri_path,
+        &host,
+        content_type,
+        &payload_hash,
+        access_key,
+        secret_key,
+        region,
+        service,
+        now,
+    );
+    let date_stamp = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let client = build_http_client(target.timeout_seconds())?;
+    let mut request = client
+        .put(parsed)
+        .header("Host", &host)
+        .header("Content-Type", content_type)
+        .header("x-amz-date", &date_stamp)
+        .header("x-amz-content-sha256", &payload_hash)
+        .header("Authorization", &auth_header)
+        .body(bytes.to_vec());
+    if target.kind == ExternalTargetKind::Glacier {
+        request = request.header("x-amz-storage-class", "GLACIER");
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|err| format!("s3 push failed: {err}"))?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+    Err(format!("s3 push returned status {}", response.status()))
+}
+
+fn build_s3_object_url(
+    endpoint: &str,
+    bucket: &str,
+    object_key: &str,
+) -> Result<String, String> {
+    let base = endpoint.trim_end_matches('/');
+    let encoded_key = encode_object_key(object_key);
+    Ok(format!("{base}/{bucket}/{encoded_key}"))
+}
+
+fn hex_sha256(data: &[u8]) -> String {
+    use sha2::Digest as Sha2Digest;
+    let hash = Sha256::digest(data);
+    hex::encode(hash)
+}
+
+fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key)
+        .expect("HMAC accepts any key length");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
+}
+
+fn build_sigv4_authorization(
+    method: &str,
+    uri_path: &str,
+    host: &str,
+    content_type: &str,
+    payload_hash: &str,
+    access_key: &str,
+    secret_key: &str,
+    region: &str,
+    service: &str,
+    now: DateTime<Utc>,
+) -> String {
+    let date_stamp = now.format("%Y%m%d").to_string();
+    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let credential_scope = format!("{date_stamp}/{region}/{service}/aws4_request");
+    let signed_headers = "content-type;host;x-amz-content-sha256;x-amz-date";
+    let canonical_headers = format!(
+        "content-type:{content_type}\nhost:{host}\n\
+         x-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n"
+    );
+    let canonical_request = format!(
+        "{method}\n{uri_path}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+    );
+    let canonical_hash = hex_sha256(canonical_request.as_bytes());
+    let string_to_sign = format!(
+        "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{canonical_hash}"
+    );
+    let signing_key = derive_signing_key(secret_key, &date_stamp, region, service);
+    let signature = hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes()));
+    format!(
+        "AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, \
+         SignedHeaders={signed_headers}, Signature={signature}"
+    )
+}
+
+fn derive_signing_key(
+    secret_key: &str,
+    date_stamp: &str,
+    region: &str,
+    service: &str,
+) -> Vec<u8> {
+    let k_date = hmac_sha256(format!("AWS4{secret_key}").as_bytes(), date_stamp.as_bytes());
+    let k_region = hmac_sha256(&k_date, region.as_bytes());
+    let k_service = hmac_sha256(&k_region, service.as_bytes());
+    hmac_sha256(&k_service, b"aws4_request")
 }
 
 async fn upload_http_target(
@@ -1043,21 +1286,23 @@ pub async fn export_backup_run_archive(
 mod tests {
     use super::{
         apply_backup_retention, backup_archive_etag, backup_archive_key, backup_changed_since,
-        backup_failpoint_guard, backup_policy_matches_runner, build_snapshot_archive,
-        complete_backup_run, compress_gzip, compress_gzip_with_writer, execute_backup_run,
-        export_backup_run_archive, fail_backup_run, is_due, is_valid_backup_schedule,
-        is_valid_backup_scope, is_valid_backup_strategy, is_valid_backup_type,
-        is_valid_snapshot_trigger, load_backup_bucket, load_chunk_checksum,
-        load_completed_backup_run, map_http_client_build_error, map_run_lookup_error,
-        map_sftp_connect_error, map_sftp_timeout_error, map_ssh_connect_error,
-        map_ssh_timeout_error, memory_writer_fail_guard, normalize_backup_scope,
-        parse_external_targets, parse_upload_method, persist_backup_archive, prune_backup_run,
-        read_snapshot_object_payload, render_tar_entries, render_tar_entries_with_writer,
-        resolve_target_url, run_backup_policy_once, run_sftp_connect, run_ssh_connect,
-        sanitize_archive_path, store_backup_archive, test_external_target_connection,
-        test_http_target, test_sftp_target, test_ssh_target, upload_external_target,
-        upload_external_targets, upload_http_target, write_backup_chunk, ArchiveFormat,
-        ExternalBackupTarget, ExternalTargetKind, MemoryWriter,
+        backup_failpoint_guard, backup_policy_matches_runner, build_s3_object_url,
+        build_sigv4_authorization, build_snapshot_archive, complete_backup_run, compress_gzip,
+        compress_gzip_with_writer, derive_signing_key, execute_backup_run,
+        export_backup_run_archive, fail_backup_run, hex_sha256, is_due,
+        is_valid_backup_schedule, is_valid_backup_scope, is_valid_backup_strategy,
+        is_valid_backup_type, is_valid_snapshot_trigger, load_backup_bucket,
+        load_chunk_checksum, load_completed_backup_run, map_http_client_build_error,
+        map_run_lookup_error, map_sftp_connect_error, map_sftp_timeout_error,
+        map_ssh_connect_error, map_ssh_timeout_error, memory_writer_fail_guard,
+        normalize_backup_scope, parse_external_targets, parse_upload_method,
+        persist_backup_archive, prune_backup_run, read_snapshot_object_payload,
+        render_tar_entries, render_tar_entries_with_writer, resolve_target_url,
+        run_backup_policy_once, run_sftp_connect, run_ssh_connect, sanitize_archive_path,
+        store_backup_archive, test_external_target_connection, test_http_target,
+        test_sftp_target, test_ssh_target, upload_external_target, upload_external_targets,
+        upload_http_target, write_backup_chunk, ArchiveFormat, ExternalBackupTarget,
+        ExternalTargetKind, MemoryWriter,
     };
     use crate::test_support;
     use axum::http::StatusCode;
@@ -1107,6 +1352,13 @@ mod tests {
             method: method.map(str::to_string),
             headers: None,
             timeout_seconds: Some(10),
+            access_key_id: None,
+            secret_access_key: None,
+            region: None,
+            bucket_name: None,
+            vault_name: None,
+            username: None,
+            password: None,
         }
     }
 
@@ -1447,9 +1699,12 @@ mod tests {
             {
                 "name": "archive-s3",
                 "kind": "s3",
-                "endpoint": "https://backup.example.com/archive",
-                "method": "PUT",
-                "timeoutSeconds": 10
+                "endpoint": "https://s3.amazonaws.com",
+                "timeoutSeconds": 10,
+                "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+                "secretAccessKey": "wJalrXUtnFEMI/bPxRfiCYEXAMPLEKEY",
+                "region": "us-east-1",
+                "bucketName": "my-bucket"
             },
             {
                 "name": "archive-sftp",
@@ -1470,6 +1725,9 @@ mod tests {
         .expect("targets");
         assert_eq!(parsed.len(), 4);
         assert_eq!(parsed[0].kind, ExternalTargetKind::S3);
+        assert_eq!(parsed[0].access_key_id.as_deref(), Some("AKIAIOSFODNN7EXAMPLE"));
+        assert_eq!(parsed[0].region.as_deref(), Some("us-east-1"));
+        assert_eq!(parsed[0].bucket_name.as_deref(), Some("my-bucket"));
         assert_eq!(parsed[1].kind, ExternalTargetKind::Sftp);
         assert_eq!(parsed[2].kind, ExternalTargetKind::Sftp);
         assert_eq!(parsed[3].kind, ExternalTargetKind::Ssh);
@@ -1564,6 +1822,83 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(bad_timeout.contains("1..=120"));
+    }
+
+    #[test]
+    fn parse_external_targets_rejects_s3_without_required_credentials() {
+        let err = parse_external_targets(&json!([
+            {
+                "name": "s3-missing-creds",
+                "kind": "s3",
+                "endpoint": "https://s3.amazonaws.com"
+            }
+        ]))
+        .unwrap_err();
+        assert!(err.contains("s3 target requires accessKeyId"));
+    }
+
+    #[test]
+    fn parse_external_targets_rejects_glacier_without_vault_name() {
+        let err = parse_external_targets(&json!([
+            {
+                "name": "glacier-missing",
+                "kind": "glacier",
+                "endpoint": "https://glacier.amazonaws.com",
+                "accessKeyId": "AKIA",
+                "secretAccessKey": "secret",
+                "region": "us-east-1"
+            }
+        ]))
+        .unwrap_err();
+        assert!(err.contains("glacier target requires vaultName"));
+    }
+
+    #[test]
+    fn sigv4_signing_produces_expected_authorization_header() {
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 1, 15)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_utc();
+        let payload_hash = hex_sha256(b"test-body");
+        let auth = build_sigv4_authorization(
+            "PUT",
+            "/my-bucket/test.tar.gz",
+            "s3.amazonaws.com",
+            "application/gzip",
+            &payload_hash,
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/bPxRfiCYEXAMPLEKEY",
+            "us-east-1",
+            "s3",
+            now,
+        );
+        assert!(auth.starts_with("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/"));
+        assert!(auth.contains("20260115/us-east-1/s3/aws4_request"));
+        assert!(auth.contains("SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date"));
+        assert!(auth.contains("Signature="));
+    }
+
+    #[test]
+    fn build_s3_object_url_encodes_key_segments() {
+        let url = build_s3_object_url(
+            "https://s3.amazonaws.com",
+            "my-bucket",
+            "nss-backups/policy-1/run.tar.gz",
+        )
+        .expect("url");
+        assert_eq!(
+            url,
+            "https://s3.amazonaws.com/my-bucket/nss-backups%2Fpolicy-1%2Frun.tar.gz"
+        );
+    }
+
+    #[test]
+    fn derive_signing_key_produces_deterministic_output() {
+        let key1 = derive_signing_key("secret", "20260115", "us-east-1", "s3");
+        let key2 = derive_signing_key("secret", "20260115", "us-east-1", "s3");
+        assert_eq!(key1, key2);
+        assert_eq!(key1.len(), 32);
     }
 
     #[test]

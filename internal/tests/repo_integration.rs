@@ -114,6 +114,13 @@ fn sftp_target(endpoint: &str) -> ExternalBackupTarget {
         method: None,
         headers: None,
         timeout_seconds: Some(1),
+        access_key_id: None,
+        secret_access_key: None,
+        region: None,
+        bucket_name: None,
+        vault_name: None,
+        username: None,
+        password: None,
     }
 }
 
@@ -126,6 +133,13 @@ fn ssh_target(endpoint: &str) -> ExternalBackupTarget {
         method: None,
         headers: None,
         timeout_seconds: Some(1),
+        access_key_id: None,
+        secret_access_key: None,
+        region: None,
+        bucket_name: None,
+        vault_name: None,
+        username: None,
+        password: None,
     }
 }
 

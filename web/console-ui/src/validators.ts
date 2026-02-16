@@ -204,7 +204,14 @@ export function isExternalBackupTarget(value: unknown): value is ExternalBackupT
     (value['enabled'] === undefined || isBoolean(value['enabled'])) &&
     (value['method'] === undefined || isString(value['method'])) &&
     (value['headers'] === undefined || value['headers'] === null || isStringRecord(value['headers'])) &&
-    (value['timeoutSeconds'] === undefined || isNumber(value['timeoutSeconds']))
+    (value['timeoutSeconds'] === undefined || isNumber(value['timeoutSeconds'])) &&
+    (value['accessKeyId'] === undefined || isString(value['accessKeyId'])) &&
+    (value['secretAccessKey'] === undefined || isString(value['secretAccessKey'])) &&
+    (value['region'] === undefined || isString(value['region'])) &&
+    (value['bucketName'] === undefined || isString(value['bucketName'])) &&
+    (value['vaultName'] === undefined || isString(value['vaultName'])) &&
+    (value['username'] === undefined || isString(value['username'])) &&
+    (value['password'] === undefined || isString(value['password']))
   );
 }
 
