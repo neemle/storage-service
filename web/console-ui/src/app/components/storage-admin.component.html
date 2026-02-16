@@ -592,19 +592,111 @@
                   >
                     Enable backup policy
                   </mat-slide-toggle>
-                  <mat-form-field appearance="outline" class="full-width">
-                    <mat-label>External targets JSON</mat-label>
-                    <textarea
-                      matInput
-                      rows="8"
-                      [value]="app.backupExternalTargets()"
-                      #wizardExternalTargets
-                      (input)="app.backupExternalTargets.set(wizardExternalTargets.value)"
-                    ></textarea>
-                  </mat-form-field>
+
+                  <h4>External targets</h4>
+                  @for (target of app.wizardTargets(); track app.trackWizardTarget($index, target)) {
+                    <div class="wizard-target-card">
+                      <div class="wizard-target-head">
+                        <strong>Target {{ $index + 1 }}</strong>
+                        <button mat-icon-button title="Remove" (click)="app.removeWizardTarget($index)">
+                          <i class="fa-solid fa-trash"></i>
+                        </button>
+                      </div>
+                      <div class="storage-inline-grid">
+                        <mat-form-field appearance="outline">
+                          <mat-label>Name</mat-label>
+                          <input
+                            matInput
+                            [value]="target.name"
+                            (input)="app.updateWizardTarget($index, 'name', $any($event.target).value)"
+                          />
+                        </mat-form-field>
+                        <mat-form-field appearance="outline">
+                          <mat-label>Kind</mat-label>
+                          <mat-select
+                            [value]="target.kind"
+                            (selectionChange)="app.updateWizardTarget($index, 'kind', $event.value)"
+                          >
+                            @for (kind of app.targetKindOptions; track kind) {
+                              <mat-option [value]="kind">{{ kind }}</mat-option>
+                            }
+                          </mat-select>
+                        </mat-form-field>
+                      </div>
+                      <mat-form-field appearance="outline" class="full-width">
+                        <mat-label>Endpoint</mat-label>
+                        <input
+                          matInput
+                          [value]="target.endpoint"
+                          (input)="app.updateWizardTarget($index, 'endpoint', $any($event.target).value)"
+                        />
+                      </mat-form-field>
+                      <div class="storage-inline-grid">
+                        <mat-form-field appearance="outline">
+                          <mat-label>Method</mat-label>
+                          <mat-select
+                            [value]="target.method"
+                            (selectionChange)="app.updateWizardTarget($index, 'method', $event.value)"
+                          >
+                            <mat-option value="">default</mat-option>
+                            <mat-option value="PUT">PUT</mat-option>
+                            <mat-option value="POST">POST</mat-option>
+                          </mat-select>
+                        </mat-form-field>
+                        <mat-form-field appearance="outline">
+                          <mat-label>Timeout (s)</mat-label>
+                          <input
+                            matInput
+                            type="number"
+                            min="1"
+                            [value]="target.timeoutSeconds"
+                            (input)="app.updateWizardTarget($index, 'timeoutSeconds', $any($event.target).value)"
+                          />
+                        </mat-form-field>
+                      </div>
+                      <mat-slide-toggle
+                        color="primary"
+                        [checked]="target.enabled"
+                        (change)="app.updateWizardTarget($index, 'enabled', $event.checked)"
+                      >
+                        Enabled
+                      </mat-slide-toggle>
+
+                      <p class="storage-help-note" style="margin-top:8px">Headers</p>
+                      @for (header of target.headers; track app.trackHeader($index, header)) {
+                        <div class="header-row">
+                          <span class="header-label">{{ header.key }}: {{ header.value }}</span>
+                          <button mat-icon-button title="Remove header" (click)="app.removeHeaderFromTarget(target, $index)">
+                            <i class="fa-solid fa-xmark"></i>
+                          </button>
+                        </div>
+                      }
+                      <div class="storage-inline-grid">
+                        <mat-form-field appearance="outline">
+                          <mat-label>Header name</mat-label>
+                          <input
+                            matInput
+                            [value]="target.headerKey"
+                            (input)="app.updateWizardTarget($index, 'headerKey', $any($event.target).value)"
+                          />
+                        </mat-form-field>
+                        <mat-form-field appearance="outline">
+                          <mat-label>Header value</mat-label>
+                          <input
+                            matInput
+                            [value]="target.headerValue"
+                            (input)="app.updateWizardTarget($index, 'headerValue', $any($event.target).value)"
+                          />
+                        </mat-form-field>
+                      </div>
+                      <button mat-stroked-button (click)="app.addWizardTargetHeader($index)">Add header</button>
+                    </div>
+                  }
+
                   <div class="row">
-                    <button mat-stroked-button (click)="app.handleShowExternalTargetsExample()">Show example</button>
-                    <button mat-stroked-button (click)="app.handleTestExternalTargets()">Test remote targets</button>
+                    <button mat-stroked-button (click)="app.addWizardTarget()">Add target</button>
+                    <button mat-stroked-button (click)="app.handleShowExternalTargetsExample()">Load example</button>
+                    <button mat-stroked-button (click)="app.testWizardTargets()">Test remote targets</button>
                   </div>
                 </div>
               }

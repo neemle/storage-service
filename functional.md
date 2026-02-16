@@ -30,6 +30,8 @@ When implementation and docs differ, this document wins.
   - `saml2`: browser login is federated through an external identity provider bridge that exposes an
     OIDC-compatible authorization-code surface to NSS.
 - Replica join and heartbeat paths let the master reason about node availability and replication state.
+- Every node (master and replica) periodically refreshes its filesystem capacity and free bytes in the
+  database so that the console and admin APIs report up-to-date `maxAvailableBytes` per bucket.
 - Replication factor and write quorum settings allow balancing durability and write availability for
   single-site clusters with one or more replicas.
 - Master-issued access keys and presigned URLs are validated against shared metadata so replicas can
@@ -155,6 +157,8 @@ Failure modes:
 
 Acceptance:
 - Metadata and object state remain consistent after each operation.
+- Console bucket listing includes `boundNodeIds` and `maxAvailableBytes` derived from writable bound volumes.
+- When no explicit binding exists, free-space calculations use the default writable volume set.
 
 ### UC-004: Replica join and replication
 

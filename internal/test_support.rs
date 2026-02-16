@@ -40,9 +40,10 @@ pub async fn setup_pool() -> PgPool {
 pub async fn reset_db(pool: &PgPool) {
     sqlx::query(
         "TRUNCATE TABLE replica_runtime_config, backup_runs, backup_policies, bucket_change_events, \
-bucket_snapshot_objects, bucket_snapshots, bucket_snapshot_policies, audit_log, access_keys, \
-multipart_parts, multipart_uploads, object_version_manifests, manifest_chunks, manifests, \
-chunk_replicas, chunks, object_versions, buckets, join_tokens, nodes, users RESTART IDENTITY CASCADE",
+bucket_volume_bindings, bucket_snapshot_objects, bucket_snapshots, bucket_snapshot_policies, \
+audit_log, access_keys, multipart_parts, multipart_uploads, object_version_manifests, \
+manifest_chunks, manifests, chunk_replicas, chunks, object_versions, buckets, join_tokens, \
+nodes, users RESTART IDENTITY CASCADE",
     )
     .execute(pool)
     .await

@@ -94,6 +94,22 @@ const BACKUP_SCHEDULES: BackupSchedule[] = ['hourly', 'daily', 'weekly', 'monthl
 const BACKUP_STRATEGIES: BackupStrategy[] = ['3-2-1', '3-2-1-1-0', '4-3-2'];
 const BUCKET_VERSIONING_OPTIONS: BucketVersioningStatus[] = ['off', 'enabled', 'suspended'];
 const BACKUP_WIZARD_STEPS = ['Scope', 'Buckets', 'Policy', 'Targets'];
+const TARGET_KIND_OPTIONS: ExternalBackupTarget['kind'][] = ['s3', 'sftp', 'ssh', 'glacier', 'other'];
+const TARGET_METHOD_OPTIONS: Array<ExternalBackupTarget['method'] | ''> = ['', 'PUT', 'POST'];
+
+interface WizardTarget {
+  name: string;
+  kind: ExternalBackupTarget['kind'];
+  endpoint: string;
+  method: ExternalBackupTarget['method'] | '';
+  enabled: boolean;
+  headerKey: string;
+  headerValue: string;
+  headers: Array<{ key: string; value: string }>;
+  timeoutSeconds: string;
+}
+
+type WizardTargetScalarField = 'name' | 'kind' | 'endpoint' | 'method' | 'enabled' | 'headerKey' | 'headerValue' | 'timeoutSeconds';
 
 interface AppSettings {
   theme: ThemeMode;
@@ -215,6 +231,7 @@ export class AppComponent {
   readonly backupWizardOpen = signal(false);
   readonly backupWizardStep = signal(0);
   readonly externalTargetsExampleOpen = signal(false);
+  readonly wizardTargets = signal<WizardTarget[]>([]);
   readonly editingSnapshotPolicyId = signal('');
   readonly editingBackupPolicyId = signal('');
 
@@ -224,6 +241,8 @@ export class AppComponent {
   readonly backupStrategyOptions = BACKUP_STRATEGIES;
   readonly bucketVersioningOptions = BUCKET_VERSIONING_OPTIONS;
   readonly backupWizardSteps = BACKUP_WIZARD_STEPS;
+  readonly targetKindOptions = TARGET_KIND_OPTIONS;
+  readonly targetMethodOptions = TARGET_METHOD_OPTIONS;
   readonly backupExternalTargetsExample = JSON.stringify(
     [
       {
@@ -983,6 +1002,7 @@ export class AppComponent {
     } else {
       this.clearBackupPolicyEditor();
     }
+    this.syncWizardTargetsFromJson();
     this.error.set('');
     this.backupWizardStep.set(0);
     this.backupWizardOpen.set(true);
@@ -1011,6 +1031,7 @@ export class AppComponent {
   }
 
   async saveBackupWizard(): Promise<void> {
+    this.syncJsonFromWizardTargets();
     const error = this.validateBackupWizardStep(this.backupWizardSteps.length - 1);
     if (error) {
       this.error.set(error);
@@ -1032,7 +1053,78 @@ export class AppComponent {
 
   applyExternalTargetsExample(): void {
     this.backupExternalTargets.set(this.backupExternalTargetsExample);
+    this.syncWizardTargetsFromJson();
     this.externalTargetsExampleOpen.set(false);
+  }
+
+  addWizardTarget(): void {
+    const targets = [...this.wizardTargets()];
+    targets.push(this.emptyWizardTarget());
+    this.wizardTargets.set(targets);
+  }
+
+  removeWizardTarget(index: number): void {
+    const targets = this.wizardTargets().filter((_, i) => i !== index);
+    this.wizardTargets.set(targets);
+  }
+
+  updateWizardTarget(index: number, field: WizardTargetScalarField, value: string | boolean): void {
+    const targets = [...this.wizardTargets()];
+    const target = { ...targets[index] };
+    (target as Record<WizardTargetScalarField, string | boolean>)[field] = value;
+    targets[index] = target;
+    this.wizardTargets.set(targets);
+  }
+
+  addWizardTargetHeader(index: number): void {
+    const targets = [...this.wizardTargets()];
+    const target = { ...targets[index] };
+    if (!target.headerKey.trim() || !target.headerValue.trim()) {
+      return;
+    }
+    target.headers = [...target.headers, { key: target.headerKey.trim(), value: target.headerValue.trim() }];
+    target.headerKey = '';
+    target.headerValue = '';
+    targets[index] = target;
+    this.wizardTargets.set(targets);
+  }
+
+  removeWizardTargetHeader(targetIndex: number, headerIndex: number): void {
+    const targets = [...this.wizardTargets()];
+    const target = { ...targets[targetIndex] };
+    target.headers = target.headers.filter((_, i) => i !== headerIndex);
+    targets[targetIndex] = target;
+    this.wizardTargets.set(targets);
+  }
+
+  removeHeaderFromTarget(target: WizardTarget, headerIndex: number): void {
+    const targets = [...this.wizardTargets()];
+    const idx = targets.indexOf(target);
+    if (idx < 0) {
+      return;
+    }
+    const updated = { ...targets[idx] };
+    updated.headers = updated.headers.filter((_, i) => i !== headerIndex);
+    targets[idx] = updated;
+    this.wizardTargets.set(targets);
+  }
+
+  trackWizardTarget(index: number, _item: WizardTarget): number {
+    return index;
+  }
+
+  trackHeader(index: number, _item: { key: string; value: string }): number {
+    return index;
+  }
+
+  syncJsonFromWizardTargets(): void {
+    const targets = this.wizardTargets().map(wt => this.wizardTargetToExternal(wt));
+    this.backupExternalTargets.set(JSON.stringify(targets, null, 2));
+  }
+
+  testWizardTargets(): void {
+    this.syncJsonFromWizardTargets();
+    this.handleTestExternalTargets();
   }
 
   async handleSaveBackupPolicy(): Promise<void> {
@@ -1111,6 +1203,7 @@ export class AppComponent {
     this.backupRetention.set(7);
     this.backupEnabled.set(true);
     this.backupExternalTargets.set('[]');
+    this.wizardTargets.set([]);
     this.syncStorageDefaults();
   }
 
@@ -1910,12 +2003,77 @@ export class AppComponent {
       }
     }
     if (step === this.backupWizardSteps.length - 1) {
-      if (this.parseExternalTargets(this.backupExternalTargets()) === null) {
-        return 'External targets must be valid JSON';
-      }
+      this.syncJsonFromWizardTargets();
       return this.validateBackupPolicyForm();
     }
     return null;
+  }
+
+  private syncWizardTargetsFromJson(): void {
+    const parsed = this.parseExternalTargets(this.backupExternalTargets());
+    if (!parsed) {
+      this.wizardTargets.set([]);
+      return;
+    }
+    this.wizardTargets.set(parsed.map(t => this.externalToWizardTarget(t)));
+  }
+
+  private externalToWizardTarget(t: ExternalBackupTarget): WizardTarget {
+    const headers: Array<{ key: string; value: string }> = [];
+    if (t.headers) {
+      for (const [key, value] of Object.entries(t.headers)) {
+        headers.push({ key, value });
+      }
+    }
+    return {
+      name: t.name,
+      kind: t.kind,
+      endpoint: t.endpoint,
+      method: t.method ?? '',
+      enabled: t.enabled ?? true,
+      headerKey: '',
+      headerValue: '',
+      headers,
+      timeoutSeconds: t.timeoutSeconds !== undefined ? String(t.timeoutSeconds) : ''
+    };
+  }
+
+  private wizardTargetToExternal(wt: WizardTarget): ExternalBackupTarget {
+    const target: ExternalBackupTarget = {
+      name: wt.name.trim(),
+      kind: wt.kind,
+      endpoint: wt.endpoint.trim(),
+      enabled: wt.enabled
+    };
+    if (wt.method === 'PUT' || wt.method === 'POST') {
+      target.method = wt.method;
+    }
+    if (wt.headers.length > 0) {
+      const headers: Record<string, string> = {};
+      for (const h of wt.headers) {
+        headers[h.key] = h.value;
+      }
+      target.headers = headers;
+    }
+    const timeout = Number.parseInt(wt.timeoutSeconds, 10);
+    if (!Number.isNaN(timeout) && timeout > 0) {
+      target.timeoutSeconds = timeout;
+    }
+    return target;
+  }
+
+  private emptyWizardTarget(): WizardTarget {
+    return {
+      name: '',
+      kind: 's3',
+      endpoint: '',
+      method: 'PUT',
+      enabled: true,
+      headerKey: '',
+      headerValue: '',
+      headers: [],
+      timeoutSeconds: '20'
+    };
   }
 
   private stringifyExternalTargets(raw: unknown): string {
@@ -2105,6 +2263,7 @@ export class AppComponent {
     this.backupWizardOpen.set(false);
     this.backupWizardStep.set(0);
     this.externalTargetsExampleOpen.set(false);
+    this.wizardTargets.set([]);
     this.editingSnapshotPolicyId.set('');
     this.editingBackupPolicyId.set('');
     this.newUsername.set('');

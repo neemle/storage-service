@@ -55,6 +55,7 @@ pub fn start_background_jobs(state: AppState) {
     start_backup_jobs(state.clone());
     start_repair_workers(state.clone());
     start_scrubber(state.clone());
+    start_capacity_refresh(state.clone());
     start_lifecycle_jobs(state);
 }
 
@@ -98,6 +99,30 @@ fn start_repair_workers(state: AppState) {
                 repair_worker_step(&worker_state).await;
             }
         });
+    }
+}
+
+fn start_capacity_refresh(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_secs(30)).await;
+            refresh_capacity_once(&state).await;
+        }
+    });
+}
+
+async fn refresh_capacity_once(state: &AppState) {
+    let usage = crate::util::storage_volume::data_dirs_usage(&state.config.data_dirs);
+    if let Err(err) = state
+        .repo
+        .update_node_heartbeat(
+            state.node_id,
+            Some(usage.capacity_bytes),
+            Some(usage.free_bytes),
+        )
+        .await
+    {
+        tracing::debug!(error = %err, "capacity refresh failed");
     }
 }
 
@@ -436,8 +461,9 @@ async fn store_repair_replica(
 mod tests {
     use super::{
         backup_scheduler_enabled, execute_snapshot_policy, gc_once, multipart_cleanup_once,
-        repair_chunk, repair_worker_step, run_backup_policies_once, run_snapshot_policies_once,
-        scrub_once, should_run_snapshot_policy, start_background_jobs, start_backup_scheduler,
+        refresh_capacity_once, repair_chunk, repair_worker_step, run_backup_policies_once,
+        run_snapshot_policies_once, scrub_once, should_run_snapshot_policy,
+        start_background_jobs, start_backup_scheduler, start_capacity_refresh,
         start_snapshot_scheduler, RepairQueue, GC_RUNS, MULTIPART_CLEANUP_RUNS, SCRUB_RUNS,
     };
     use crate::api::AppState;
@@ -920,6 +946,16 @@ mod tests {
         tokio::time::advance(Duration::from_secs(61)).await;
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_secs(61)).await;
+        tokio::task::yield_now().await;
+    }
+
+    #[tokio::test]
+    async fn capacity_refresh_ticks_periodically() {
+        let (state, _pool, _dir) = test_support::build_state("master").await;
+        tokio::time::pause();
+        start_capacity_refresh(state);
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(31)).await;
         tokio::task::yield_now().await;
     }
 
@@ -1425,5 +1461,29 @@ mod tests {
         state.repo = test_support::broken_repo();
         let err = repair_chunk(&state, Uuid::new_v4()).await.unwrap_err();
         assert!(err.contains("checksum load failed"));
+    }
+
+    #[tokio::test]
+    async fn refresh_capacity_once_updates_node_free_bytes() {
+        let (state, pool, _dir) = test_support::build_state("master").await;
+        sqlx::query("UPDATE nodes SET free_bytes = 0 WHERE node_id = $1")
+            .bind(state.node_id)
+            .execute(&pool)
+            .await
+            .expect("zero free");
+        refresh_capacity_once(&state).await;
+        let nodes = state.repo.list_nodes().await.expect("nodes");
+        let node = nodes
+            .iter()
+            .find(|n| n.node_id == state.node_id)
+            .expect("local node");
+        assert!(node.free_bytes.unwrap_or(0) > 0);
+    }
+
+    #[tokio::test]
+    async fn refresh_capacity_once_tolerates_broken_repo() {
+        let (mut state, _pool, _dir) = test_support::build_state("master").await;
+        state.repo = test_support::broken_repo();
+        refresh_capacity_once(&state).await;
     }
 }

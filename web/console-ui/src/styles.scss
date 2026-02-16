@@ -360,6 +360,30 @@ body {
   padding: 20px 24px;
   overflow-y: auto;
 }
+.wizard-target-card {
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: var(--c-surface-hover);
+}
+.wizard-target-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.header-label {
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--c-text-secondary);
+}
 .json-example {
   margin: 0;
   padding: 12px;

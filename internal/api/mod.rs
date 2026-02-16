@@ -261,9 +261,20 @@ fn local_address(config: &Config) -> String {
 async fn ensure_local_node(repo: &Repo, config: &Config) -> Result<Uuid, String> {
     let address = local_address(config);
     if let Some(node) = lookup_local_node(repo, &address).await? {
+        refresh_local_node_capacity(repo, node.node_id, config).await;
         return Ok(node.node_id);
     }
     insert_local_node(repo, config, &address).await
+}
+
+async fn refresh_local_node_capacity(repo: &Repo, node_id: Uuid, config: &Config) {
+    let (capacity_bytes, free_bytes) = local_node_capacity(config);
+    if let Err(err) = repo
+        .update_node_heartbeat(node_id, capacity_bytes, free_bytes)
+        .await
+    {
+        tracing::debug!(error = %err, "local node capacity refresh failed");
+    }
 }
 
 pub async fn refresh_node_heartbeat_metrics(state: &AppState) {
@@ -343,7 +354,7 @@ impl Clone for Repo {
 mod tests {
     use super::{
         bootstrap_force_password_enabled, ensure_local_node, local_address,
-        refresh_node_heartbeat_metrics, AppState,
+        refresh_local_node_capacity, refresh_node_heartbeat_metrics, AppState,
     };
     use crate::meta::repos::Repo;
     use crate::obs::Metrics;
@@ -716,5 +727,41 @@ mod tests {
             .expect("exists");
         assert_eq!(node.node_id, node_id);
         assert_eq!(node.role, "replica");
+    }
+
+    #[tokio::test]
+    async fn ensure_local_node_refreshes_capacity_on_reuse() {
+        let (state, pool, _dir) = test_support::build_state("master").await;
+        let addr = local_address(&state.config);
+        let existing = state
+            .repo
+            .get_node_by_address(&addr)
+            .await
+            .expect("node")
+            .expect("node exists");
+        sqlx::query("UPDATE nodes SET free_bytes = 0 WHERE node_id = $1")
+            .bind(existing.node_id)
+            .execute(&pool)
+            .await
+            .expect("zero free");
+        let node_id = ensure_local_node(&state.repo, &state.config)
+            .await
+            .expect("ensure");
+        assert_eq!(node_id, existing.node_id);
+        let refreshed = state
+            .repo
+            .get_node_by_address(&addr)
+            .await
+            .expect("node")
+            .expect("exists");
+        assert!(refreshed.free_bytes.unwrap_or(0) > 0);
+    }
+
+    #[tokio::test]
+    async fn refresh_local_node_capacity_tolerates_broken_repo() {
+        let (_state, _pool, dir) = test_support::build_state("master").await;
+        let broken = test_support::broken_repo();
+        let config = test_support::base_config("master", dir);
+        refresh_local_node_capacity(&broken, Uuid::new_v4(), &config).await;
     }
 }
