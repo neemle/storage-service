@@ -2889,10 +2889,10 @@ mod tests {
                     "name":"down",
                     "kind":"s3",
                     "endpoint":"http://127.0.0.1:1/up",
-                    "access_key_id":"AK",
-                    "secret_access_key":"SK",
+                    "accessKeyId":"AK",
+                    "secretAccessKey":"SK",
                     "region":"us-east-1",
-                    "bucket_name":"bkt"
+                    "bucketName":"bkt"
                 }),
             }),
         )

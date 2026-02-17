@@ -289,13 +289,15 @@ fn validate_target_scheme(
 }
 
 fn validate_target_method(target: &ExternalBackupTarget) -> Result<(), String> {
-    if let Some(method) = target.method.as_ref() {
-        let upper = method.trim().to_ascii_uppercase();
-        if upper != "PUT" && upper != "POST" {
-            return Err("remote target method must be PUT or POST".into());
-        }
+    let method = match target.method.as_deref() {
+        Some(m) => m.trim().to_ascii_uppercase(),
+        None => return Ok(()),
+    };
+    if method == "PUT" || method == "POST" {
+        Ok(())
+    } else {
+        Err("remote target method must be PUT or POST".into())
     }
-    Ok(())
 }
 
 fn validate_target_timeout(target: &ExternalBackupTarget) -> Result<(), String> {
@@ -826,7 +828,7 @@ async fn upload_s3_target(
     content_type: &str,
 ) -> Result<(), String> {
     let bucket = s3_bucket_name(target);
-    let s3_url = build_s3_object_url(&target.endpoint, bucket, object_key)?;
+    let s3_url = build_s3_object_url(&target.endpoint, bucket, object_key);
     let (parsed, host, uri_path) = parse_s3_url(&s3_url)?;
     let req = build_signed_s3_put(target, parsed, &host, &uri_path, content_type, bytes)?;
     let resp = req
@@ -839,10 +841,10 @@ async fn upload_s3_target(
     Err(format!("s3 push returned status {}", resp.status()))
 }
 
-fn build_s3_object_url(endpoint: &str, bucket: &str, object_key: &str) -> Result<String, String> {
+fn build_s3_object_url(endpoint: &str, bucket: &str, object_key: &str) -> String {
     let base = endpoint.trim_end_matches('/');
     let encoded_key = encode_object_key(object_key);
-    Ok(format!("{base}/{bucket}/{encoded_key}"))
+    format!("{base}/{bucket}/{encoded_key}")
 }
 
 fn hex_sha256(data: &[u8]) -> String {
@@ -1270,20 +1272,22 @@ mod tests {
     use super::{
         apply_backup_retention, backup_archive_etag, backup_archive_key, backup_changed_since,
         backup_failpoint_guard, backup_policy_matches_runner, build_s3_object_url,
-        build_sigv4_authorization, build_snapshot_archive, complete_backup_run, compress_gzip,
-        compress_gzip_with_writer, derive_signing_key, execute_backup_run,
-        export_backup_run_archive, fail_backup_run, hex_sha256, is_due, is_valid_backup_schedule,
-        is_valid_backup_scope, is_valid_backup_strategy, is_valid_backup_type,
-        is_valid_snapshot_trigger, load_backup_bucket, load_chunk_checksum,
+        build_signed_s3_put, build_sigv4_authorization, build_snapshot_archive,
+        complete_backup_run, compress_gzip, compress_gzip_with_writer, derive_signing_key,
+        execute_backup_run, export_backup_run_archive, fail_backup_run, hex_sha256, hmac_sha256,
+        is_due, is_valid_backup_schedule, is_valid_backup_scope, is_valid_backup_strategy,
+        is_valid_backup_type, is_valid_snapshot_trigger, load_backup_bucket, load_chunk_checksum,
         load_completed_backup_run, map_http_client_build_error, map_run_lookup_error,
         map_sftp_connect_error, map_sftp_timeout_error, map_ssh_connect_error,
         map_ssh_timeout_error, memory_writer_fail_guard, normalize_backup_scope,
-        parse_external_targets, parse_upload_method, persist_backup_archive, prune_backup_run,
-        read_snapshot_object_payload, render_tar_entries, render_tar_entries_with_writer,
-        resolve_target_url, run_backup_policy_once, run_sftp_connect, run_ssh_connect,
-        sanitize_archive_path, store_backup_archive, test_external_target_connection,
-        test_http_target, test_sftp_target, test_ssh_target, upload_external_target,
-        upload_external_targets, upload_http_target, write_backup_chunk, ArchiveFormat,
+        parse_external_targets, parse_s3_url, parse_upload_method, persist_backup_archive,
+        prune_backup_run, read_snapshot_object_payload, reject_direct_scheme, render_tar_entries,
+        render_tar_entries_with_writer, require_field, resolve_target_url, run_backup_policy_once,
+        run_sftp_connect, run_ssh_connect, s3_bucket_name, s3_service_name, sanitize_archive_path,
+        sign_s3_request, store_backup_archive, test_external_target_connection, test_http_target,
+        test_s3_target, test_sftp_target, test_ssh_target, upload_external_target,
+        upload_external_targets, upload_http_target, upload_s3_target,
+        validate_kind_specific_fields, validate_target_method, write_backup_chunk, ArchiveFormat,
         ExternalBackupTarget, ExternalTargetKind, MemoryWriter,
     };
     use crate::test_support;
@@ -1341,6 +1345,27 @@ mod tests {
             vault_name: None,
             username: None,
             password: None,
+        }
+    }
+
+    fn s3_target(endpoint: &str) -> ExternalBackupTarget {
+        ExternalBackupTarget {
+            access_key_id: Some("AKIAIOSFODNN7EXAMPLE".into()),
+            secret_access_key: Some("wJalrXUtnFEMI/bPxRfiCYEXAMPLEKEY".into()),
+            region: Some("us-east-1".into()),
+            bucket_name: Some("my-bucket".into()),
+            ..target(ExternalTargetKind::S3, endpoint, None)
+        }
+    }
+
+    fn glacier_target(endpoint: &str) -> ExternalBackupTarget {
+        ExternalBackupTarget {
+            kind: ExternalTargetKind::Glacier,
+            access_key_id: Some("AKIAIOSFODNN7EXAMPLE".into()),
+            secret_access_key: Some("wJalrXUtnFEMI/bPxRfiCYEXAMPLEKEY".into()),
+            region: Some("us-east-1".into()),
+            vault_name: Some("my-vault".into()),
+            ..target(ExternalTargetKind::Glacier, endpoint, None)
         }
     }
 
@@ -1870,8 +1895,7 @@ mod tests {
             "https://s3.amazonaws.com",
             "my-bucket",
             "nss-backups/policy-1/run.tar.gz",
-        )
-        .expect("url");
+        );
         assert_eq!(
             url,
             "https://s3.amazonaws.com/my-bucket/nss-backups%2Fpolicy-1%2Frun.tar.gz"
@@ -3436,5 +3460,356 @@ mod tests {
         prune_backup_run(&state, backup_bucket.id, &persisted)
             .await
             .expect("prune");
+    }
+
+    #[test]
+    fn require_field_accepts_non_empty_and_rejects_blank() {
+        assert!(require_field(&Some("val".into()), "m").is_ok());
+        assert!(require_field(&None, "missing").is_err());
+        assert!(require_field(&Some("  ".into()), "blank").is_err());
+    }
+
+    #[test]
+    fn validate_kind_specific_fields_enforces_s3_credentials() {
+        let mut t = s3_target("https://s3.example.com");
+        assert!(validate_kind_specific_fields(&t).is_ok());
+        t.access_key_id = None;
+        assert!(validate_kind_specific_fields(&t)
+            .unwrap_err()
+            .contains("accessKeyId"));
+        let mut t2 = s3_target("https://s3.example.com");
+        t2.secret_access_key = None;
+        assert!(validate_kind_specific_fields(&t2)
+            .unwrap_err()
+            .contains("secretAccessKey"));
+        let mut t3 = s3_target("https://s3.example.com");
+        t3.region = None;
+        assert!(validate_kind_specific_fields(&t3)
+            .unwrap_err()
+            .contains("region"));
+        let mut t4 = s3_target("https://s3.example.com");
+        t4.bucket_name = None;
+        assert!(validate_kind_specific_fields(&t4)
+            .unwrap_err()
+            .contains("bucketName"));
+    }
+
+    #[test]
+    fn validate_kind_specific_fields_enforces_glacier_credentials() {
+        let mut t = glacier_target("https://glacier.example.com");
+        assert!(validate_kind_specific_fields(&t).is_ok());
+        t.vault_name = None;
+        assert!(validate_kind_specific_fields(&t)
+            .unwrap_err()
+            .contains("vaultName"));
+    }
+
+    #[test]
+    fn validate_kind_specific_fields_allows_sftp_ssh_other() {
+        let sftp = target(ExternalTargetKind::Sftp, "http://gw/", None);
+        assert!(validate_kind_specific_fields(&sftp).is_ok());
+        let ssh = target(ExternalTargetKind::Ssh, "http://gw/", None);
+        assert!(validate_kind_specific_fields(&ssh).is_ok());
+        let other = target(ExternalTargetKind::Other, "http://gw/", None);
+        assert!(validate_kind_specific_fields(&other).is_ok());
+    }
+
+    #[test]
+    fn s3_bucket_name_returns_bucket_or_vault() {
+        let s3 = s3_target("https://s3.example.com");
+        assert_eq!(s3_bucket_name(&s3), "my-bucket");
+        let gl = glacier_target("https://glacier.example.com");
+        assert_eq!(s3_bucket_name(&gl), "my-vault");
+        let empty = target(ExternalTargetKind::S3, "http://x", None);
+        assert_eq!(s3_bucket_name(&empty), "");
+    }
+
+    #[test]
+    fn s3_service_name_returns_correct_service() {
+        let s3 = s3_target("https://s3.example.com");
+        assert_eq!(s3_service_name(&s3), "s3");
+        let gl = glacier_target("https://glacier.example.com");
+        assert_eq!(s3_service_name(&gl), "glacier");
+    }
+
+    #[test]
+    fn parse_s3_url_extracts_host_and_path() {
+        let (_, host, path) = parse_s3_url("https://s3.example.com/bucket/key").expect("parse");
+        assert_eq!(host, "s3.example.com");
+        assert_eq!(path, "/bucket/key");
+    }
+
+    #[test]
+    fn parse_s3_url_rejects_invalid_url() {
+        assert!(parse_s3_url("://bad").is_err());
+    }
+
+    #[test]
+    fn hmac_sha256_produces_32_byte_output() {
+        let result = hmac_sha256(b"key", b"data");
+        assert_eq!(result.len(), 32);
+        let result2 = hmac_sha256(b"key", b"data");
+        assert_eq!(result, result2);
+    }
+
+    #[test]
+    fn sign_s3_request_produces_authorization_header() {
+        let t = s3_target("https://s3.amazonaws.com");
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 1, 15)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_utc();
+        let hash = hex_sha256(b"body");
+        let auth = sign_s3_request(
+            &t,
+            "PUT",
+            "/bucket/key",
+            "s3.amazonaws.com",
+            "application/gzip",
+            &hash,
+            now,
+        );
+        assert!(auth.starts_with("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/"));
+        assert!(auth.contains("us-east-1/s3/aws4_request"));
+    }
+
+    #[test]
+    fn reject_direct_scheme_allows_http_and_rejects_direct() {
+        let http_sftp = ExternalBackupTarget {
+            kind: ExternalTargetKind::Sftp,
+            ..target(ExternalTargetKind::Other, "http://gw/upload", None)
+        };
+        assert!(reject_direct_scheme(&http_sftp).is_ok());
+        let direct_sftp = target(ExternalTargetKind::Sftp, "sftp://host/path", None);
+        assert!(reject_direct_scheme(&direct_sftp).is_err());
+        let http_ssh = ExternalBackupTarget {
+            kind: ExternalTargetKind::Ssh,
+            ..target(ExternalTargetKind::Other, "http://gw/upload", None)
+        };
+        assert!(reject_direct_scheme(&http_ssh).is_ok());
+        let direct_ssh = target(ExternalTargetKind::Ssh, "ssh://host/path", None);
+        assert!(reject_direct_scheme(&direct_ssh).is_err());
+        let s3 = s3_target("https://s3.example.com");
+        assert!(reject_direct_scheme(&s3).is_ok());
+    }
+
+    #[test]
+    fn build_signed_s3_put_creates_request_with_headers() {
+        ensure_rustls_provider();
+        let t = s3_target("https://s3.example.com");
+        let url = reqwest::Url::parse("https://s3.example.com/my-bucket/test.tar.gz").expect("url");
+        let result = build_signed_s3_put(
+            &t,
+            url,
+            "s3.example.com",
+            "/my-bucket/test.tar.gz",
+            "application/gzip",
+            b"data",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn build_signed_s3_put_glacier_includes_storage_class() {
+        ensure_rustls_provider();
+        let t = glacier_target("https://glacier.example.com");
+        let url =
+            reqwest::Url::parse("https://glacier.example.com/my-vault/a.tar.gz").expect("url");
+        let result = build_signed_s3_put(
+            &t,
+            url,
+            "glacier.example.com",
+            "/my-vault/a.tar.gz",
+            "application/gzip",
+            b"data",
+        );
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_s3_target_connection_reports_connectivity_error() {
+        ensure_rustls_provider();
+        let t = s3_target("http://127.0.0.1:1");
+        let err = test_external_target_connection(&t).await.unwrap_err();
+        assert!(err.contains("s3 connectivity check failed"));
+    }
+
+    #[tokio::test]
+    async fn test_s3_target_connection_server_error_returns_err() {
+        ensure_rustls_provider();
+        let (url, handle) = spawn_status_server(StatusCode::INTERNAL_SERVER_ERROR).await;
+        let t = s3_target(url.trim_end_matches('/'));
+        let err = test_external_target_connection(&t).await.unwrap_err();
+        assert!(err.contains("s3 server error status"));
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_s3_target_connection_success_returns_ok() {
+        ensure_rustls_provider();
+        let (url, handle) = spawn_status_server(StatusCode::OK).await;
+        let t = s3_target(url.trim_end_matches('/'));
+        let msg = test_external_target_connection(&t).await.expect("ok");
+        assert!(msg.contains("s3 endpoint reachable"));
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn upload_s3_target_reports_connection_error() {
+        ensure_rustls_provider();
+        let t = s3_target("http://127.0.0.1:1");
+        let err = upload_external_target(&t, "run.tar.gz", b"data", "application/gzip")
+            .await
+            .unwrap_err();
+        assert!(err.contains("s3 push failed"));
+    }
+
+    #[tokio::test]
+    async fn upload_s3_target_server_error_returns_err() {
+        ensure_rustls_provider();
+        let (url, handle) = spawn_status_server(StatusCode::INTERNAL_SERVER_ERROR).await;
+        let t = s3_target(url.trim_end_matches('/'));
+        let err = upload_external_target(&t, "run.tar.gz", b"data", "application/gzip")
+            .await
+            .unwrap_err();
+        assert!(err.contains("s3 push returned status"));
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn upload_s3_target_success_returns_ok() {
+        ensure_rustls_provider();
+        let (url, handle) = spawn_status_server(StatusCode::OK).await;
+        let t = s3_target(url.trim_end_matches('/'));
+        upload_external_target(&t, "run.tar.gz", b"data", "application/gzip")
+            .await
+            .expect("ok");
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn upload_glacier_target_success_returns_ok() {
+        ensure_rustls_provider();
+        let (url, handle) = spawn_status_server(StatusCode::OK).await;
+        let t = glacier_target(url.trim_end_matches('/'));
+        upload_external_target(&t, "run.tar.gz", b"data", "application/gzip")
+            .await
+            .expect("ok");
+        handle.abort();
+    }
+
+    #[test]
+    fn parse_external_targets_validates_s3_kind_fields() {
+        let json = json!([{
+            "name": "s3",
+            "kind": "s3",
+            "endpoint": "https://s3.amazonaws.com",
+            "accessKeyId": "AK",
+            "secretAccessKey": "SK",
+            "region": "us-east-1",
+            "bucketName": "bkt"
+        }]);
+        let targets = parse_external_targets(&json).expect("ok");
+        assert_eq!(targets.len(), 1);
+        let bad = json!([{
+            "name": "s3-bad",
+            "kind": "s3",
+            "endpoint": "https://s3.amazonaws.com"
+        }]);
+        let err = parse_external_targets(&bad).unwrap_err();
+        assert!(err.contains("accessKeyId"));
+    }
+
+    #[test]
+    fn glacier_validation_rejects_missing_secret_key() {
+        let mut t = glacier_target("https://glacier.example.com");
+        t.secret_access_key = None;
+        let err = validate_kind_specific_fields(&t).unwrap_err();
+        assert!(err.contains("secretAccessKey"));
+    }
+
+    #[test]
+    fn validate_target_method_rejects_delete_and_accepts_put() {
+        let mut t = target(ExternalTargetKind::Other, "http://example.com", None);
+        t.method = Some("PUT".to_string());
+        assert!(validate_target_method(&t).is_ok());
+        t.method = Some("DELETE".to_string());
+        let err = validate_target_method(&t).unwrap_err();
+        assert!(err.contains("PUT or POST"));
+    }
+
+    #[test]
+    fn parse_s3_url_rejects_url_without_host() {
+        let err = parse_s3_url("data:text/plain,hello").unwrap_err();
+        assert!(err.contains("missing host"));
+    }
+
+    #[tokio::test]
+    async fn test_http_target_reports_connectivity_error() {
+        let t = target(ExternalTargetKind::Other, "http://127.0.0.1:1/", None);
+        let err = test_http_target(&t).await.unwrap_err();
+        assert!(err.contains("http connectivity check failed"));
+    }
+
+    #[test]
+    fn glacier_validation_rejects_missing_access_key() {
+        let mut t = glacier_target("https://glacier.example.com");
+        t.access_key_id = None;
+        let err = validate_kind_specific_fields(&t).unwrap_err();
+        assert!(err.contains("accessKeyId"));
+    }
+
+    #[test]
+    fn glacier_validation_rejects_missing_region() {
+        let mut t = glacier_target("https://glacier.example.com");
+        t.region = None;
+        let err = validate_kind_specific_fields(&t).unwrap_err();
+        assert!(err.contains("region"));
+    }
+
+    #[tokio::test]
+    async fn test_s3_target_parse_url_error() {
+        let t = s3_target("://");
+        let err = test_s3_target(&t).await.unwrap_err();
+        assert!(err.contains("invalid remote target endpoint URL"));
+    }
+
+    #[tokio::test]
+    async fn test_s3_target_client_build_failpoint() {
+        ensure_rustls_provider();
+        let _fp = backup_failpoint_guard(1);
+        let t = s3_target("http://127.0.0.1:1");
+        let err = test_s3_target(&t).await.unwrap_err();
+        assert!(err.contains("http client build failed"));
+    }
+
+    #[test]
+    fn build_signed_s3_put_client_build_failpoint() {
+        let _fp = backup_failpoint_guard(1);
+        let t = s3_target("http://127.0.0.1:1");
+        let url = reqwest::Url::parse("http://127.0.0.1:1/bkt/k").unwrap();
+        let err = build_signed_s3_put(&t, url, "127.0.0.1:1", "/bkt/k", "application/gzip", b"x");
+        assert!(err.unwrap_err().contains("http client build failed"));
+    }
+
+    #[tokio::test]
+    async fn upload_s3_target_parse_url_error() {
+        let t = s3_target("://");
+        let err = upload_s3_target(&t, "run.tar.gz", b"data", "application/gzip")
+            .await
+            .unwrap_err();
+        assert!(err.contains("invalid remote target endpoint URL"));
+    }
+
+    #[tokio::test]
+    async fn upload_s3_target_client_build_failpoint() {
+        ensure_rustls_provider();
+        let _fp = backup_failpoint_guard(1);
+        let t = s3_target("http://127.0.0.1:1");
+        let err = upload_s3_target(&t, "run.tar.gz", b"data", "application/gzip")
+            .await
+            .unwrap_err();
+        assert!(err.contains("http client build failed"));
     }
 }

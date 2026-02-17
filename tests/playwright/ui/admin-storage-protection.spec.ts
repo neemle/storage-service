@@ -174,9 +174,15 @@ async function createAndEditBackupPolicy(
   await expect(policyRow).toBeVisible({ timeout: 20000 });
 
   await activateButton(policyRow.getByRole('button', { name: 'Edit policy' }));
+  const wizard = page.locator('.backup-wizard-modal');
+  await expect(wizard).toBeVisible({ timeout: 10000 });
+  await activateButton(wizard.getByRole('button', { name: 'Next' }));
+  await activateButton(wizard.getByRole('button', { name: 'Next' }));
   const updatedPolicyName = `${policyName}-updated`;
-  await typeSlow(card.getByLabel('Policy name'), updatedPolicyName);
-  await activateButton(card.getByRole('button', { name: 'Update backup policy' }));
+  await typeSlow(wizard.getByLabel('Policy name'), updatedPolicyName);
+  await activateButton(wizard.getByRole('button', { name: 'Next' }));
+  await activateButton(wizard.getByRole('button', { name: 'Save policy' }));
+  await expect(wizard).not.toBeVisible({ timeout: 30000 });
   const updatedPolicyRow = card.getByTestId('backup-policy-row').filter({ hasText: updatedPolicyName });
   await expect(updatedPolicyRow).toBeVisible({ timeout: 20000 });
   return updatedPolicyRow;
@@ -188,8 +194,8 @@ async function validateBackupTargetJson(page: Page, card: Locator): Promise<void
   await typeSlow(targets, '{');
   await activateButton(card.getByRole('button', { name: 'Test remote targets' }));
   await expect(page.locator('.error')).toContainText('valid JSON target objects');
-  page.once('dialog', (dialog) => dialog.accept());
   await activateButton(card.getByRole('button', { name: 'Show example' }));
+  await activateButton(page.getByRole('button', { name: 'Use this example' }));
   await expect(targets).toHaveValue(/archive-sftp-gateway/);
   await typeSlow(targets, '[]');
   await expect(targets).toHaveValue('[]');
