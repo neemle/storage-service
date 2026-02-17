@@ -891,6 +891,7 @@ mod tests {
         TestBackupTargetRequest, UpdateBackupPolicyRequest, UpdateBucketVolumesRequest,
         UpdateBucketWormRequest, UpsertSnapshotPolicyRequest,
     };
+    use crate::backup::backup_failpoint_guard;
     use crate::test_support::{self, FailTriggerGuard, TableRenameGuard};
     use axum::extract::{Path, Query, State};
     use axum::http::HeaderMap;
@@ -2880,6 +2881,7 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(invalid.0, StatusCode::BAD_REQUEST);
+        let _guard = backup_failpoint_guard(1);
         let gateway = test_backup_target(
             State(state),
             headers,

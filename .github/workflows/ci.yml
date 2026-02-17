@@ -29,7 +29,6 @@ jobs:
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
-    needs: quality-gate
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -106,6 +105,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run backend unit tests
+        env:
+          NSS_TEST_SHARDS: "6"
         run: ./scripts/unit-tests.sh
 
       - name: Run UI unit tests (dockerized)
