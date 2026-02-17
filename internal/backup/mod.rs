@@ -201,12 +201,8 @@ pub async fn test_external_target_connection(
             }
             test_http_target(target).await
         }
-        ExternalTargetKind::S3 | ExternalTargetKind::Glacier => {
-            test_s3_target(target).await
-        }
-        ExternalTargetKind::Other => {
-            test_http_target(target).await
-        }
+        ExternalTargetKind::S3 | ExternalTargetKind::Glacier => test_s3_target(target).await,
+        ExternalTargetKind::Other => test_http_target(target).await,
     }
 }
 
@@ -238,7 +234,10 @@ fn validate_kind_specific_fields(target: &ExternalBackupTarget) -> Result<(), St
     match target.kind {
         ExternalTargetKind::S3 => {
             require_field(&target.access_key_id, "s3 target requires accessKeyId")?;
-            require_field(&target.secret_access_key, "s3 target requires secretAccessKey")?;
+            require_field(
+                &target.secret_access_key,
+                "s3 target requires secretAccessKey",
+            )?;
             require_field(&target.region, "s3 target requires region")?;
             require_field(&target.bucket_name, "s3 target requires bucketName")?;
         }
@@ -379,7 +378,10 @@ async fn test_s3_target(target: &ExternalBackupTarget) -> Result<String, String>
     if response.status().is_server_error() {
         return Err(format!("s3 server error status {}", response.status()));
     }
-    Ok(format!("s3 endpoint reachable (status {})", response.status()))
+    Ok(format!(
+        "s3 endpoint reachable (status {})",
+        response.status()
+    ))
 }
 
 async fn test_http_target(target: &ExternalBackupTarget) -> Result<String, String> {
@@ -742,12 +744,12 @@ async fn upload_external_targets(
 
 fn reject_direct_scheme(target: &ExternalBackupTarget) -> Result<(), String> {
     match target.kind {
-        ExternalTargetKind::Sftp if target_uses_sftp_scheme(target)? => Err(
-            "direct sftp push is not available; use an http(s) sftp gateway endpoint".into(),
-        ),
-        ExternalTargetKind::Ssh if target_uses_ssh_scheme(target)? => Err(
-            "direct ssh push is not available; use an http(s) ssh gateway endpoint".into(),
-        ),
+        ExternalTargetKind::Sftp if target_uses_sftp_scheme(target)? => {
+            Err("direct sftp push is not available; use an http(s) sftp gateway endpoint".into())
+        }
+        ExternalTargetKind::Ssh if target_uses_ssh_scheme(target)? => {
+            Err("direct ssh push is not available; use an http(s) ssh gateway endpoint".into())
+        }
         _ => Ok(()),
     }
 }
@@ -767,31 +769,6 @@ async fn upload_external_target(
     }
 }
 
-fn build_s3_put_request(
-    client: reqwest::Client,
-    parsed: reqwest::Url,
-    host: &str,
-    content_type: &str,
-    date_stamp: &str,
-    payload_hash: &str,
-    auth: &str,
-    bytes: &[u8],
-    glacier: bool,
-) -> reqwest::RequestBuilder {
-    let mut req = client
-        .put(parsed)
-        .header("Host", host)
-        .header("Content-Type", content_type)
-        .header("x-amz-date", date_stamp)
-        .header("x-amz-content-sha256", payload_hash)
-        .header("Authorization", auth)
-        .body(bytes.to_vec());
-    if glacier {
-        req = req.header("x-amz-storage-class", "GLACIER");
-    }
-    req
-}
-
 fn sign_s3_request(
     target: &ExternalBackupTarget,
     method: &str,
@@ -802,12 +779,44 @@ fn sign_s3_request(
     now: DateTime<Utc>,
 ) -> String {
     build_sigv4_authorization(
-        method, uri_path, host, content_type, payload_hash,
+        method,
+        uri_path,
+        host,
+        content_type,
+        payload_hash,
         target.access_key_id.as_deref().unwrap_or_default(),
         target.secret_access_key.as_deref().unwrap_or_default(),
         target.region.as_deref().unwrap_or_default(),
-        s3_service_name(target), now,
+        s3_service_name(target),
+        now,
     )
+}
+
+fn build_signed_s3_put(
+    target: &ExternalBackupTarget,
+    url: reqwest::Url,
+    host: &str,
+    uri_path: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> Result<reqwest::RequestBuilder, String> {
+    let now = Utc::now();
+    let hash = hex_sha256(bytes);
+    let auth = sign_s3_request(target, "PUT", uri_path, host, content_type, &hash, now);
+    let stamp = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let client = build_http_client(target.timeout_seconds())?;
+    let mut req = client
+        .put(url)
+        .header("Host", host)
+        .header("Content-Type", content_type)
+        .header("x-amz-date", &stamp)
+        .header("x-amz-content-sha256", &hash)
+        .header("Authorization", &auth)
+        .body(bytes.to_vec());
+    if target.kind == ExternalTargetKind::Glacier {
+        req = req.header("x-amz-storage-class", "GLACIER");
+    }
+    Ok(req)
 }
 
 async fn upload_s3_target(
@@ -819,33 +828,18 @@ async fn upload_s3_target(
     let bucket = s3_bucket_name(target);
     let s3_url = build_s3_object_url(&target.endpoint, bucket, object_key)?;
     let (parsed, host, uri_path) = parse_s3_url(&s3_url)?;
-    let now = Utc::now();
-    let payload_hash = hex_sha256(bytes);
-    let auth = sign_s3_request(
-        target, "PUT", &uri_path, &host, content_type, &payload_hash, now,
-    );
-    let date_stamp = now.format("%Y%m%dT%H%M%SZ").to_string();
-    let client = build_http_client(target.timeout_seconds())?;
-    let glacier = target.kind == ExternalTargetKind::Glacier;
-    let request = build_s3_put_request(
-        client, parsed, &host, content_type, &date_stamp,
-        &payload_hash, &auth, bytes, glacier,
-    );
-    let response = request
+    let req = build_signed_s3_put(target, parsed, &host, &uri_path, content_type, bytes)?;
+    let resp = req
         .send()
         .await
-        .map_err(|err| format!("s3 push failed: {err}"))?;
-    if response.status().is_success() {
+        .map_err(|e| format!("s3 push failed: {e}"))?;
+    if resp.status().is_success() {
         return Ok(());
     }
-    Err(format!("s3 push returned status {}", response.status()))
+    Err(format!("s3 push returned status {}", resp.status()))
 }
 
-fn build_s3_object_url(
-    endpoint: &str,
-    bucket: &str,
-    object_key: &str,
-) -> Result<String, String> {
+fn build_s3_object_url(endpoint: &str, bucket: &str, object_key: &str) -> Result<String, String> {
     let base = endpoint.trim_end_matches('/');
     let encoded_key = encode_object_key(object_key);
     Ok(format!("{base}/{bucket}/{encoded_key}"))
@@ -858,28 +852,12 @@ fn hex_sha256(data: &[u8]) -> String {
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut mac = Hmac::<Sha256>::new_from_slice(key)
-        .expect("HMAC accepts any key length");
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     mac.finalize().into_bytes().to_vec()
 }
 
-fn build_canonical_request(
-    method: &str,
-    uri_path: &str,
-    host: &str,
-    content_type: &str,
-    payload_hash: &str,
-    amz_date: &str,
-) -> String {
-    let signed = "content-type;host;x-amz-content-sha256;x-amz-date";
-    let headers = format!(
-        "content-type:{content_type}\nhost:{host}\n\
-         x-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n"
-    );
-    format!("{method}\n{uri_path}\n\n{headers}\n{signed}\n{payload_hash}")
-}
-
+#[allow(clippy::too_many_arguments)]
 fn build_sigv4_authorization(
     method: &str,
     uri_path: &str,
@@ -892,16 +870,18 @@ fn build_sigv4_authorization(
     service: &str,
     now: DateTime<Utc>,
 ) -> String {
-    let date_stamp = now.format("%Y%m%d").to_string();
-    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
-    let scope = format!("{date_stamp}/{region}/{service}/aws4_request");
+    let ds = now.format("%Y%m%d").to_string();
+    let ad = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let scope = format!("{ds}/{region}/{service}/aws4_request");
     let signed = "content-type;host;x-amz-content-sha256;x-amz-date";
-    let canonical = build_canonical_request(
-        method, uri_path, host, content_type, payload_hash, &amz_date,
+    let hdr = format!(
+        "content-type:{content_type}\nhost:{host}\n\
+         x-amz-content-sha256:{payload_hash}\nx-amz-date:{ad}\n"
     );
-    let hash = hex_sha256(canonical.as_bytes());
-    let sts = format!("AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{hash}");
-    let key = derive_signing_key(secret_key, &date_stamp, region, service);
+    let cr = format!("{method}\n{uri_path}\n\n{hdr}\n{signed}\n{payload_hash}");
+    let hash = hex_sha256(cr.as_bytes());
+    let sts = format!("AWS4-HMAC-SHA256\n{ad}\n{scope}\n{hash}");
+    let key = derive_signing_key(secret_key, &ds, region, service);
     let sig = hex::encode(hmac_sha256(&key, sts.as_bytes()));
     format!(
         "AWS4-HMAC-SHA256 Credential={access_key}/{scope}, \
@@ -909,13 +889,11 @@ fn build_sigv4_authorization(
     )
 }
 
-fn derive_signing_key(
-    secret_key: &str,
-    date_stamp: &str,
-    region: &str,
-    service: &str,
-) -> Vec<u8> {
-    let k_date = hmac_sha256(format!("AWS4{secret_key}").as_bytes(), date_stamp.as_bytes());
+fn derive_signing_key(secret_key: &str, date_stamp: &str, region: &str, service: &str) -> Vec<u8> {
+    let k_date = hmac_sha256(
+        format!("AWS4{secret_key}").as_bytes(),
+        date_stamp.as_bytes(),
+    );
     let k_region = hmac_sha256(&k_date, region.as_bytes());
     let k_service = hmac_sha256(&k_region, service.as_bytes());
     hmac_sha256(&k_service, b"aws4_request")
@@ -1294,20 +1272,19 @@ mod tests {
         backup_failpoint_guard, backup_policy_matches_runner, build_s3_object_url,
         build_sigv4_authorization, build_snapshot_archive, complete_backup_run, compress_gzip,
         compress_gzip_with_writer, derive_signing_key, execute_backup_run,
-        export_backup_run_archive, fail_backup_run, hex_sha256, is_due,
-        is_valid_backup_schedule, is_valid_backup_scope, is_valid_backup_strategy,
-        is_valid_backup_type, is_valid_snapshot_trigger, load_backup_bucket,
-        load_chunk_checksum, load_completed_backup_run, map_http_client_build_error,
-        map_run_lookup_error, map_sftp_connect_error, map_sftp_timeout_error,
-        map_ssh_connect_error, map_ssh_timeout_error, memory_writer_fail_guard,
-        normalize_backup_scope, parse_external_targets, parse_upload_method,
-        persist_backup_archive, prune_backup_run, read_snapshot_object_payload,
-        render_tar_entries, render_tar_entries_with_writer, resolve_target_url,
-        run_backup_policy_once, run_sftp_connect, run_ssh_connect, sanitize_archive_path,
-        store_backup_archive, test_external_target_connection, test_http_target,
-        test_sftp_target, test_ssh_target, upload_external_target, upload_external_targets,
-        upload_http_target, write_backup_chunk, ArchiveFormat, ExternalBackupTarget,
-        ExternalTargetKind, MemoryWriter,
+        export_backup_run_archive, fail_backup_run, hex_sha256, is_due, is_valid_backup_schedule,
+        is_valid_backup_scope, is_valid_backup_strategy, is_valid_backup_type,
+        is_valid_snapshot_trigger, load_backup_bucket, load_chunk_checksum,
+        load_completed_backup_run, map_http_client_build_error, map_run_lookup_error,
+        map_sftp_connect_error, map_sftp_timeout_error, map_ssh_connect_error,
+        map_ssh_timeout_error, memory_writer_fail_guard, normalize_backup_scope,
+        parse_external_targets, parse_upload_method, persist_backup_archive, prune_backup_run,
+        read_snapshot_object_payload, render_tar_entries, render_tar_entries_with_writer,
+        resolve_target_url, run_backup_policy_once, run_sftp_connect, run_ssh_connect,
+        sanitize_archive_path, store_backup_archive, test_external_target_connection,
+        test_http_target, test_sftp_target, test_ssh_target, upload_external_target,
+        upload_external_targets, upload_http_target, write_backup_chunk, ArchiveFormat,
+        ExternalBackupTarget, ExternalTargetKind, MemoryWriter,
     };
     use crate::test_support;
     use axum::http::StatusCode;
@@ -1730,7 +1707,10 @@ mod tests {
         .expect("targets");
         assert_eq!(parsed.len(), 4);
         assert_eq!(parsed[0].kind, ExternalTargetKind::S3);
-        assert_eq!(parsed[0].access_key_id.as_deref(), Some("AKIAIOSFODNN7EXAMPLE"));
+        assert_eq!(
+            parsed[0].access_key_id.as_deref(),
+            Some("AKIAIOSFODNN7EXAMPLE")
+        );
         assert_eq!(parsed[0].region.as_deref(), Some("us-east-1"));
         assert_eq!(parsed[0].bucket_name.as_deref(), Some("my-bucket"));
         assert_eq!(parsed[1].kind, ExternalTargetKind::Sftp);
