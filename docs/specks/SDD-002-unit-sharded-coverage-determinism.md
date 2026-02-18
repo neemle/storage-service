@@ -22,6 +22,8 @@
 - AC-3: Sharded unit run still enforces configured coverage fail-under gates for lines/functions/regions.
 - AC-4: Per-shard profile output uses per-process naming so concurrent/subprocess profile writes cannot overwrite
   each other.
+- AC-5: Coverage report is generated from merged shard profiles against the exact shard-run test binary, without
+  rebuilding a new binary during report.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -33,6 +35,8 @@
 - Test binary path cannot be resolved -> fail with explicit error.
 - Any shard exits non-zero -> fail before report generation.
 - Profile output clobbered by concurrent writes -> prevented via `%p/%m` profile filename placeholders.
+- Report binary drift from rebuild -> prevented by `llvm-profdata` + `llvm-cov` over the previously discovered
+  test binary.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix

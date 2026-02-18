@@ -236,11 +236,11 @@ docker run --rm \
   -e CARGO_HOME=/app/.cargo \
   -e RUSTUP_NONINTERACTIVE=1 \
   -e RUST_BACKTRACE=1 \
-  -e CARGO_LLVM_COV_TARGET_DIR=/app/target/llvm-cov-target \
-  -e CARGO_LLVM_COV_BUILD_DIR=/app/target/llvm-cov-build \
+  -e NSS_TEST_BIN="$TEST_BIN" \
   "$TEST_IMAGE" \
   sh -c '
     set -e
+    LLVM_BIN_DIR="$(rustc --print target-libdir)/../bin"
     PROFRAW_GLOB="/app/target/llvm-cov-target/unit-shard-*.profraw"
     if ! ls ${PROFRAW_GLOB} >/dev/null 2>&1; then
       echo "no profraw files found for unit shards" >&2
@@ -248,8 +248,49 @@ docker run --rm \
       ls -la /app/*.profraw >&2 || true
       exit 1
     fi
-    cargo llvm-cov -p nss_core --lib --no-run '"${PROFILE_ARGS}"' \
-      --fail-under-lines '"${UNIT_COVERAGE_LINES}"' \
-      --fail-under-functions '"${UNIT_COVERAGE_FUNCTIONS}"' \
-      --fail-under-regions '"${UNIT_COVERAGE_REGIONS}"'
+    "$LLVM_BIN_DIR/llvm-profdata" merge -sparse ${PROFRAW_GLOB} \
+      -o /app/target/llvm-cov-target/unit-merged.profdata
+    SOURCES="$(find /app/internal -name "*.rs" -print)"
+    "$LLVM_BIN_DIR/llvm-cov" report \
+      --instr-profile=/app/target/llvm-cov-target/unit-merged.profdata \
+      "$NSS_TEST_BIN" \
+      --sources $SOURCES \
+      > /app/scripts/tmp/unit-shards/coverage.txt
   '
+
+python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+report = Path("scripts/tmp/unit-shards/coverage.txt").read_text().splitlines()
+total = next((line for line in report if line.startswith("TOTAL")), "")
+if not total:
+    raise SystemExit("coverage report missing TOTAL line")
+
+percents = [float(val.strip("%")) for val in re.findall(r"\d+\.\d+%", total)]
+if len(percents) < 3:
+    raise SystemExit(f"unexpected coverage line: {total}")
+
+region_cover, func_cover, line_cover = percents[:3]
+
+min_lines = float(os.environ.get("UNIT_COVERAGE_LINES", "100"))
+min_funcs = float(os.environ.get("UNIT_COVERAGE_FUNCTIONS", "100"))
+min_regions = float(os.environ.get("UNIT_COVERAGE_REGIONS", "100"))
+
+print(Path("scripts/tmp/unit-shards/coverage.txt").read_text())
+
+failed = False
+if line_cover < min_lines:
+    print(f"Line coverage {line_cover:.2f}% below {min_lines:.2f}%")
+    failed = True
+if func_cover < min_funcs:
+    print(f"Function coverage {func_cover:.2f}% below {min_funcs:.2f}%")
+    failed = True
+if region_cover < min_regions:
+    print(f"Region coverage {region_cover:.2f}% below {min_regions:.2f}%")
+    failed = True
+
+if failed:
+    raise SystemExit(1)
+PY
