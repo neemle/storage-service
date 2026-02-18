@@ -4,6 +4,8 @@
 - Stabilize backend unit sharded execution so coverage is computed from the exact binary and profiles created in
   the current run.
 - Keep coverage thresholds at 100% lines/functions/regions and fix only sharded orchestration behavior.
+- Ensure `api/portal.rs` router embedded fallback path is explicitly exercised in unit tests so coverage remains
+  deterministic across CI runs.
 
 ## Non-goals
 - Changing coverage thresholds.
@@ -24,6 +26,8 @@
   each other.
 - AC-5: Coverage report is generated from merged shard profiles against the exact shard-run test binary, without
   rebuilding a new binary during report.
+- AC-6: Unit tests explicitly execute the router embedded fallback path in `api/portal.rs` and keep that path at
+  100% function/line/region coverage.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -37,12 +41,14 @@
 - Profile output clobbered by concurrent writes -> prevented via `%p/%m` profile filename placeholders.
 - Report binary drift from rebuild -> prevented by `llvm-profdata` + `llvm-cov` over the previously discovered
   test binary.
+- Router embedded fallback closure not executed -> prevented by dedicated router-fallback unit test.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix
 - Unit:
   - Run `scripts/unit-tests-sharded.sh` with shard count > 1 and verify successful shard completion.
   - Verify coverage report generation still applies fail-under thresholds.
+  - Verify `api/portal.rs` row reports 100% for regions/functions/lines.
 - Integration:
   - Not applicable (script-only change).
 - Curl/UI:
