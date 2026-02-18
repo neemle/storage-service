@@ -38,11 +38,13 @@ TMP_DIR="scripts/tmp/unit-shards"
 mkdir -p "$TMP_DIR"
 TEST_LIST="$TMP_DIR/tests.list"
 TEST_BIN_PATH="$TMP_DIR/test-binary.path"
+LIST_OUTPUT="$TMP_DIR/list-output.log"
 rm -f "$TMP_DIR"/exit-* "$TMP_DIR"/shard-*.log 2>/dev/null || true
 
-# Clean old coverage data
-rm -f target/llvm-cov-target/*.profraw 2>/dev/null || true
+# Clean old coverage data and instrumented build artifacts to avoid stale binaries/profiles.
+rm -rf target/llvm-cov-target target/llvm-cov-build
 mkdir -p target/llvm-cov-build
+rm -f default_*.profraw 2>/dev/null || true
 
 # Build the instrumented test binary once, then list tests from it.
 
@@ -54,25 +56,45 @@ docker run --rm \
   -e RUSTUP_NONINTERACTIVE=1 \
   -e CARGO_LLVM_COV_TARGET_DIR=/app/target/llvm-cov-target \
   -e CARGO_LLVM_COV_BUILD_DIR=/app/target/llvm-cov-build \
+  -e LLVM_PROFILE_FILE=/app/target/llvm-cov-target/unit-list.profraw \
   "$TEST_IMAGE" \
   sh -c "cargo llvm-cov -p nss_core --lib $PROFILE_ARGS --no-report -- --list" \
-  | awk '/: test$/{sub(/:$/,"",$1); print $1}' > "$TEST_LIST"
+  > "$LIST_OUTPUT"
+
+awk '/: test$/{sub(/:$/,"",$1); print $1}' "$LIST_OUTPUT" > "$TEST_LIST"
+
+awk '
+  /Running unittests .*nss_core-/ {
+    line = $0
+    sub(/^.*\(/, "", line)
+    sub(/\).*/, "", line)
+    print line
+  }
+' "$LIST_OUTPUT" | tail -n 1 > "$TEST_BIN_PATH"
+
+if [ ! -s "$TEST_LIST" ]; then
+  echo "no unit tests discovered from --list output" >&2
+  cat "$LIST_OUTPUT" >&2
+  exit 1
+fi
 
 # Clear profraw produced by the list run.
-rm -f target/llvm-cov-target/*.profraw 2>/dev/null || true
-
-docker run --rm \
-  -v "$(pwd):/app" \
-  -w /app \
-  "$TEST_IMAGE" \
-  sh -c "find /app/target/llvm-cov-target -type f -perm -111 -name 'nss_core-*' \
-    -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d ' ' -f2-" \
-  > "$TEST_BIN_PATH"
+rm -f target/llvm-cov-target/*.profraw default_*.profraw 2>/dev/null || true
 
 TEST_BIN=$(cat "$TEST_BIN_PATH")
 if [ -z "$TEST_BIN" ]; then
-  echo "test binary not found" >&2
-  exit 1
+  docker run --rm \
+    -v "$(pwd):/app" \
+    -w /app \
+    "$TEST_IMAGE" \
+    sh -c "find /app/target/llvm-cov-target -type f -perm -111 -name 'nss_core-*' \
+      -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d ' ' -f2-" \
+    > "$TEST_BIN_PATH"
+  TEST_BIN=$(cat "$TEST_BIN_PATH")
+  if [ -z "$TEST_BIN" ]; then
+    echo "test binary not found" >&2
+    exit 1
+  fi
 fi
 
 python3 - <<'PY'
@@ -151,9 +173,9 @@ for i in $(seq 1 "$SHARDS"); do
 done
 
 # Run shards in parallel against shared infrastructure
+rm -f target/llvm-cov-target/unit-shard-*.profraw 2>/dev/null || true
 for i in $(seq 1 "$SHARDS"); do
-  FILTER_ARGS=$(tr '\n' ' ' < "scripts/tmp/unit-shards/shard-${i}.list")
-  LLVM_PROFILE_FILE="/app/target/llvm-cov-target/unit-shard-${i}-%p-%m.profraw"
+  LLVM_PROFILE_FILE="/app/target/llvm-cov-target/unit-shard-${i}.profraw"
   LOG_FILE="$TMP_DIR/shard-${i}.log"
 
   (
@@ -173,8 +195,11 @@ for i in $(seq 1 "$SHARDS"); do
       -e NSS_REDIS_URL=redis://redis:6379 \
       -e NSS_RABBIT_URL=amqp://rabbitmq:5672/%2f \
       "$TEST_IMAGE" \
-      sh -c "if [ -z \"$FILTER_ARGS\" ]; then exit 0; fi; \
-        \"$TEST_BIN\" --test-threads=$TEST_THREADS --exact $FILTER_ARGS" \
+      sh -c "set -e; \
+        SHARD_FILE=\"/app/scripts/tmp/unit-shards/shard-${i}.list\"; \
+        if [ ! -s \"\$SHARD_FILE\" ]; then exit 0; fi; \
+        set -- \$(cat \"\$SHARD_FILE\"); \
+        \"$TEST_BIN\" --test-threads=$TEST_THREADS --exact \"\$@\"" \
       >"$LOG_FILE" 2>&1
     status=$?
     echo "$status" > "$TMP_DIR/exit-${i}"
@@ -210,12 +235,16 @@ docker run --rm \
   -e CARGO_HOME=/app/.cargo \
   -e RUSTUP_NONINTERACTIVE=1 \
   -e RUST_BACKTRACE=1 \
+  -e CARGO_LLVM_COV_TARGET_DIR=/app/target/llvm-cov-target \
+  -e CARGO_LLVM_COV_BUILD_DIR=/app/target/llvm-cov-build \
   "$TEST_IMAGE" \
   sh -c '
     set -e
     PROFRAW_GLOB="/app/target/llvm-cov-target/unit-shard-*.profraw"
     if ! ls ${PROFRAW_GLOB} >/dev/null 2>&1; then
       echo "no profraw files found for unit shards" >&2
+      ls -la /app/target/llvm-cov-target >&2 || true
+      ls -la /app/*.profraw >&2 || true
       exit 1
     fi
     cargo llvm-cov -p nss_core --lib --no-run '"${PROFILE_ARGS}"' \
