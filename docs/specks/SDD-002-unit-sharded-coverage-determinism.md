@@ -20,6 +20,8 @@
 - AC-1: Sharded unit run builds and executes tests using the binary produced in the same list/build step.
 - AC-2: Sharded unit run does not reuse stale llvm-cov target/build artifacts from prior runs.
 - AC-3: Sharded unit run still enforces configured coverage fail-under gates for lines/functions/regions.
+- AC-4: Per-shard profile output uses per-process naming so concurrent/subprocess profile writes cannot overwrite
+  each other.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -30,6 +32,7 @@
 - No tests discovered from list output -> fail with explicit error.
 - Test binary path cannot be resolved -> fail with explicit error.
 - Any shard exits non-zero -> fail before report generation.
+- Profile output clobbered by concurrent writes -> prevented via `%p/%m` profile filename placeholders.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix

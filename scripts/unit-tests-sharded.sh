@@ -175,7 +175,8 @@ done
 # Run shards in parallel against shared infrastructure
 rm -f target/llvm-cov-target/unit-shard-*.profraw 2>/dev/null || true
 for i in $(seq 1 "$SHARDS"); do
-  LLVM_PROFILE_FILE="/app/target/llvm-cov-target/unit-shard-${i}.profraw"
+  # Include pid/module placeholders so profile writes from subprocesses do not clobber each other.
+  LLVM_PROFILE_FILE="/app/target/llvm-cov-target/unit-shard-${i}-%p-%m.profraw"
   LOG_FILE="$TMP_DIR/shard-${i}.log"
 
   (
