@@ -28,6 +28,8 @@
   rebuilding a new binary during report.
 - AC-6: Unit tests explicitly execute the router embedded fallback path in `api/portal.rs` and keep that path at
   100% function/line/region coverage.
+- AC-7: Sharded unit script executes `api::portal::tests::router_embedded_fallback_serves_ui_route` in a dedicated
+  post-shard pass so merged coverage always includes the embedded fallback path.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -42,6 +44,7 @@
 - Report binary drift from rebuild -> prevented by `llvm-profdata` + `llvm-cov` over the previously discovered
   test binary.
 - Router embedded fallback closure not executed -> prevented by dedicated router-fallback unit test.
+- Router fallback path omitted due shard execution variance -> prevented by dedicated post-shard fallback test run.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix
@@ -49,6 +52,7 @@
   - Run `scripts/unit-tests-sharded.sh` with shard count > 1 and verify successful shard completion.
   - Verify coverage report generation still applies fail-under thresholds.
   - Verify `api/portal.rs` row reports 100% for regions/functions/lines.
+  - Verify post-shard fallback test execution log exists at `scripts/tmp/unit-shards/portal-fallback.log`.
 - Integration:
   - Not applicable (script-only change).
 - Curl/UI:

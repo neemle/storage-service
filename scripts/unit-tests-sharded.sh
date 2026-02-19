@@ -226,6 +226,29 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
+# Ensure the embedded portal fallback path is exercised in this run.
+PORTAL_FALLBACK_TEST="api::portal::tests::router_embedded_fallback_serves_ui_route"
+PORTAL_LOG_FILE="$TMP_DIR/portal-fallback.log"
+PORTAL_PROFILE_FILE="/app/target/llvm-cov-target/unit-shard-portal-%p-%m.profraw"
+
+docker run --rm \
+  --name "${BASE_PROJECT}_unit_runner_portal_fallback" \
+  --network "$NETWORK_NAME" \
+  -v "$(pwd):/app" \
+  -v "$(pwd)/.rustup:/root/.rustup" \
+  -w /app \
+  -e CARGO_HOME=/app/.cargo \
+  -e RUSTUP_NONINTERACTIVE=1 \
+  -e RUST_BACKTRACE=1 \
+  -e CARGO_INCREMENTAL=1 \
+  -e LLVM_PROFILE_FILE="$PORTAL_PROFILE_FILE" \
+  -e NSS_POSTGRES_DSN=postgres://nss:nss@postgres:5432/nss_shard_1?sslmode=disable \
+  -e NSS_REDIS_URL=redis://redis:6379 \
+  -e NSS_RABBIT_URL=amqp://rabbitmq:5672/%2f \
+  "$TEST_IMAGE" \
+  sh -c "\"$TEST_BIN\" --test-threads=1 --exact \"$PORTAL_FALLBACK_TEST\"" \
+  >"$PORTAL_LOG_FILE" 2>&1
+
 # Generate merged report without running tests (use cargo llvm-cov for
 # consistent reporting with the non-sharded path).
 
