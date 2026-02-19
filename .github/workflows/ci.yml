@@ -106,10 +106,26 @@ jobs:
       - uses: actions/checkout@v4
       - name: Print checked out commit
         run: git rev-parse HEAD
+
+      - name: Set up Docker Buildx for unit test image cache
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build cached unit test runner image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/test-runner.Dockerfile
+          tags: nss-test-runner:ci-cached
+          load: true
+          cache-from: type=gha,scope=unit-test-runner
+          cache-to: type=gha,mode=max,scope=unit-test-runner,ignore-error=true
+
       - name: Run backend unit tests
         run: |
           set -euo pipefail
-          NSS_TEST_SHARDS=6 NSS_TEST_THREADS=1 NSS_TEST_PROFILE=test ./scripts/unit-tests.sh
+          NSS_TEST_IMAGE=nss-test-runner:ci-cached \
+          NSS_TEST_SHARDS=6 NSS_TEST_THREADS=1 NSS_TEST_PROFILE=test \
+          ./scripts/unit-tests.sh
 
       - name: Upload backend unit diagnostics
         if: failure()
