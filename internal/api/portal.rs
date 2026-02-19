@@ -35,6 +35,7 @@ pub fn router(state: AppState) -> Router {
     router
 }
 
+#[cfg_attr(test, inline(never))]
 fn build_cors(origins: &[String]) -> CorsLayer {
     let allow_headers = AllowHeaders::list(vec![
         CONTENT_TYPE,
@@ -63,6 +64,7 @@ fn build_cors(origins: &[String]) -> CorsLayer {
         .allow_credentials(true)
 }
 
+#[cfg_attr(test, inline(never))]
 async fn embedded_ui_with_dir(
     dir: &'static Dir<'static>,
     method: Method,
@@ -95,6 +97,7 @@ async fn embedded_ui_with_dir(
     StatusCode::NOT_FOUND.into_response()
 }
 
+#[cfg_attr(test, inline(never))]
 async fn embedded_ui(method: Method, uri: Uri, headers: HeaderMap) -> Response {
     embedded_ui_with_dir(&EMBEDDED_UI, method, uri, headers).await
 }
@@ -105,6 +108,7 @@ struct EmbeddedAsset {
     gzipped: bool,
 }
 
+#[cfg_attr(test, inline(never))]
 fn get_embedded_asset(
     dir: &'static Dir<'static>,
     path: &str,
@@ -128,6 +132,7 @@ fn get_embedded_asset(
     })
 }
 
+#[cfg_attr(test, inline(never))]
 fn response_with_content_type(
     contents: &'static [u8],
     content_type: &'static str,
@@ -141,6 +146,7 @@ fn response_with_content_type(
     (headers, Bytes::from_static(contents)).into_response()
 }
 
+#[cfg_attr(test, inline(never))]
 fn client_accepts_gzip(headers: &HeaderMap) -> bool {
     let Some(value) = headers.get(ACCEPT_ENCODING) else {
         return false;
@@ -151,10 +157,12 @@ fn client_accepts_gzip(headers: &HeaderMap) -> bool {
     accepts_encoding(raw, "gzip")
 }
 
+#[cfg_attr(test, inline(never))]
 fn accepts_encoding(raw: &str, target: &str) -> bool {
     raw.split(',').any(|part| encoding_allowed(part, target))
 }
 
+#[cfg_attr(test, inline(never))]
 fn encoding_allowed(part: &str, target: &str) -> bool {
     let mut sections = part.split(';');
     let token = sections.next().unwrap_or("").trim();
@@ -166,6 +174,7 @@ fn encoding_allowed(part: &str, target: &str) -> bool {
         .is_none_or(|quality| quality > 0.0)
 }
 
+#[cfg_attr(test, inline(never))]
 fn parse_quality(section: &str) -> Option<f32> {
     let trimmed = section.trim();
     let (key, value) = trimmed.split_once('=')?;
@@ -175,6 +184,7 @@ fn parse_quality(section: &str) -> Option<f32> {
     value.trim().parse::<f32>().ok()
 }
 
+#[cfg_attr(test, inline(never))]
 fn content_type_for(path: &str) -> &'static str {
     let ext = path.rsplit('.').next().unwrap_or("");
     if ext.is_empty() {

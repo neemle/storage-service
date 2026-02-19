@@ -38,6 +38,8 @@
   to deterministic, directly testable code paths.
 - AC-11: Post-shard portal pass executes each discovered `api::portal::tests::*` test name one-by-one with
   `--exact` and validates every expected test appears as `... ok` in the pass log.
+- AC-12: Portal helper functions use `#[cfg_attr(test, inline(never))]` so test/coverage builds cannot lose
+  deterministic function attribution due inlining decisions.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -60,6 +62,8 @@
   handler plus direct handler unit coverage.
 - Multi-filter test invocation ambiguity causes partial/zero portal execution -> prevented by per-test exact execution
   and explicit expected-vs-seen portal test verification.
+- Compiler inlining in test binaries causes occasional function-attribution misses -> prevented by
+  `#[cfg_attr(test, inline(never))]` on portal helper functions.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix
@@ -72,6 +76,7 @@
   - Verify portal pass uses `scripts/tmp/unit-shards/portal-tests.list` and reports `test result: ok.`.
   - Verify named fallback handler test `embedded_ui_handler_uses_embedded_dir` passes and contributes coverage.
   - Verify every portal test listed in `portal-tests.list` appears in `portal-fallback.log` as `test ... ok`.
+  - Verify `api/portal.rs` helper functions are annotated with `#[cfg_attr(test, inline(never))]`.
 - Integration:
   - Not applicable (script-only change).
 - Curl/UI:
