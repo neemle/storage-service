@@ -127,16 +127,46 @@ jobs:
           NSS_TEST_SHARDS=6 NSS_TEST_THREADS=1 NSS_TEST_PROFILE=test \
           ./scripts/unit-tests.sh
 
+      - name: Prepare backend unit diagnostics
+        if: failure()
+        run: |
+          set -euo pipefail
+          OUT_DIR=".artifacts/backend-unit-diagnostics"
+          mkdir -p "$OUT_DIR"
+
+          {
+            echo "run_id=${{ github.run_id }}"
+            echo "job=stage-1-unit"
+            echo "sha=${{ github.sha }}"
+            echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$OUT_DIR/meta.txt"
+
+          if [ -d scripts/tmp/unit-shards ]; then
+            cp -a scripts/tmp/unit-shards "$OUT_DIR/unit-shards"
+          fi
+
+          docker compose -p deploy_unit -f deploy/docker-compose.test.yml ps \
+            > "$OUT_DIR/compose-ps.txt" 2>&1 || true
+          docker compose -p deploy_unit -f deploy/docker-compose.test.yml logs \
+            --no-color --tail=400 postgres redis rabbitmq \
+            > "$OUT_DIR/compose-services.log" 2>&1 || true
+
+          if [ -d target/llvm-cov-target ]; then
+            find target/llvm-cov-target -maxdepth 2 -type f | sort \
+              > "$OUT_DIR/llvm-cov-target-files.txt" || true
+          fi
+          if [ -d target/llvm-cov-build ]; then
+            find target/llvm-cov-build -maxdepth 2 -type f | sort \
+              > "$OUT_DIR/llvm-cov-build-files.txt" || true
+          fi
+
       - name: Upload backend unit diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: backend-unit-diagnostics
           if-no-files-found: ignore
-          path: |
-            scripts/tmp/unit-shards
-            target/llvm-cov-target
-            target/llvm-cov-build
+          path: .artifacts/backend-unit-diagnostics
 
       - name: Run UI unit tests (dockerized)
         run: ./scripts/ui-unit-tests.sh
