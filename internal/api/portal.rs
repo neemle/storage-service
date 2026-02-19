@@ -29,9 +29,7 @@ pub fn router(state: AppState) -> Router {
             .fallback(ServeFile::new(index_path).precompressed_gzip());
         router = router.fallback_service(service);
     } else {
-        router = router.fallback(|method: Method, uri: Uri, headers: HeaderMap| async move {
-            embedded_ui_with_dir(&EMBEDDED_UI, method, uri, headers).await
-        });
+        router = router.fallback(embedded_ui);
     }
 
     router
@@ -95,6 +93,10 @@ async fn embedded_ui_with_dir(
     }
 
     StatusCode::NOT_FOUND.into_response()
+}
+
+async fn embedded_ui(method: Method, uri: Uri, headers: HeaderMap) -> Response {
+    embedded_ui_with_dir(&EMBEDDED_UI, method, uri, headers).await
 }
 
 struct EmbeddedAsset {
@@ -202,8 +204,9 @@ fn content_type_for(path: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        accepts_encoding, build_cors, client_accepts_gzip, content_type_for, embedded_ui_with_dir,
-        encoding_allowed, get_embedded_asset, parse_quality, router, EMBEDDED_UI,
+        accepts_encoding, build_cors, client_accepts_gzip, content_type_for, embedded_ui,
+        embedded_ui_with_dir, encoding_allowed, get_embedded_asset, parse_quality, router,
+        EMBEDDED_UI,
     };
     use crate::test_support;
     use axum::body::Body;
@@ -214,7 +217,7 @@ mod tests {
 
     static TEST_GZIP_UI: Dir = include_dir!("$CARGO_MANIFEST_DIR/tests/fixtures/portal-ui-gzip");
 
-    async fn embedded_ui(
+    async fn embedded_ui_response(
         method: Method,
         uri: &str,
         headers: HeaderMap,
@@ -318,16 +321,16 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_ui_rejects_non_get_requests() {
-        let response = embedded_ui(Method::POST, "/", HeaderMap::new()).await;
+        let response = embedded_ui_response(Method::POST, "/", HeaderMap::new()).await;
         assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn embedded_ui_serves_index_for_root_and_routes() {
-        let root = embedded_ui(Method::GET, "/", HeaderMap::new()).await;
+        let root = embedded_ui_response(Method::GET, "/", HeaderMap::new()).await;
         assert_eq!(root.status(), axum::http::StatusCode::OK);
 
-        let route = embedded_ui(Method::GET, "/app/buckets", HeaderMap::new()).await;
+        let route = embedded_ui_response(Method::GET, "/app/buckets", HeaderMap::new()).await;
         assert_eq!(route.status(), axum::http::StatusCode::OK);
     }
 
@@ -335,7 +338,7 @@ mod tests {
     async fn embedded_ui_serves_gzip_when_client_requests_it() {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("gzip"));
-        let response = embedded_ui(Method::GET, "/", headers).await;
+        let response = embedded_ui_response(Method::GET, "/", headers).await;
         assert_eq!(response.status(), axum::http::StatusCode::OK);
         let encoding = response
             .headers()
@@ -365,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_ui_serves_index_for_route_without_extension() {
-        let route = embedded_ui(Method::GET, "/console", HeaderMap::new()).await;
+        let route = embedded_ui_response(Method::GET, "/console", HeaderMap::new()).await;
         assert_eq!(route.status(), axum::http::StatusCode::OK);
         let content_type = route
             .headers()
@@ -376,20 +379,31 @@ mod tests {
 
     #[tokio::test]
     async fn embedded_ui_returns_not_found_for_missing_asset() {
-        let response = embedded_ui(Method::GET, "/missing.css", HeaderMap::new()).await;
+        let response = embedded_ui_response(Method::GET, "/missing.css", HeaderMap::new()).await;
         assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn embedded_ui_rejects_parent_traversal() {
-        let response = embedded_ui(Method::GET, "/../secret", HeaderMap::new()).await;
+        let response = embedded_ui_response(Method::GET, "/../secret", HeaderMap::new()).await;
         assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn embedded_ui_allows_head_requests() {
-        let response = embedded_ui(Method::HEAD, "/", HeaderMap::new()).await;
+        let response = embedded_ui_response(Method::HEAD, "/", HeaderMap::new()).await;
         assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn embedded_ui_handler_uses_embedded_dir() {
+        let response = embedded_ui(
+            Method::GET,
+            "/__nss_ui_fallback_probe__/deep/link".parse().expect("uri"),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

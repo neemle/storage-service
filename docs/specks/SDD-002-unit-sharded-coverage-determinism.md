@@ -34,6 +34,8 @@
   test binary path.
 - AC-9: Dedicated post-shard fallback probe must prove the fallback test executed and emitted a profile file; silent
   zero-test probe runs are treated as failures.
+- AC-10: Portal router uses a named fallback handler instead of an inline closure so fallback coverage is attributed
+  to deterministic, directly testable code paths.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -52,6 +54,8 @@
 - Router fallback path omitted due shard execution variance -> prevented by dedicated post-shard portal test pass.
 - Dedicated portal pass matches zero tests -> prevented by required `portal-tests.list` generation, pass-log
   assertion, and portal profile output check.
+- Inline fallback closure counted as a separate uncovered function in some runs -> prevented by using a named fallback
+  handler plus direct handler unit coverage.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix
@@ -62,6 +66,7 @@
   - Verify post-shard portal pass log exists at `scripts/tmp/unit-shards/portal-fallback.log`.
   - Verify normalized test-list output exists at `scripts/tmp/unit-shards/list-output-clean.log`.
   - Verify portal pass uses `scripts/tmp/unit-shards/portal-tests.list` and reports `test result: ok.`.
+  - Verify named fallback handler test `embedded_ui_handler_uses_embedded_dir` passes and contributes coverage.
 - Integration:
   - Not applicable (script-only change).
 - Curl/UI:
