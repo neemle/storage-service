@@ -37,6 +37,7 @@ ensure_test_image "$TEST_IMAGE"
 TMP_DIR="scripts/tmp/unit-shards"
 mkdir -p "$TMP_DIR"
 TEST_LIST="$TMP_DIR/tests.list"
+PORTAL_TEST_LIST="$TMP_DIR/portal-tests.list"
 TEST_BIN_PATH="$TMP_DIR/test-binary.path"
 LIST_OUTPUT="$TMP_DIR/list-output.log"
 LIST_OUTPUT_CLEAN="$TMP_DIR/list-output-clean.log"
@@ -92,6 +93,13 @@ PY
 
 if [ ! -s "$TEST_LIST" ]; then
   echo "no unit tests discovered from --list output" >&2
+  cat "$LIST_OUTPUT_CLEAN" >&2
+  exit 1
+fi
+
+grep '^api::portal::tests::' "$TEST_LIST" > "$PORTAL_TEST_LIST" || true
+if [ ! -s "$PORTAL_TEST_LIST" ]; then
+  echo "no portal tests discovered from --list output" >&2
   cat "$LIST_OUTPUT_CLEAN" >&2
   exit 1
 fi
@@ -244,8 +252,8 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-# Ensure the embedded portal fallback probe test executes in this run for deterministic coverage.
-PORTAL_TEST_FILTER="router_embedded_fallback_serves_ui_route"
+# Execute all portal tests in a dedicated pass to make portal coverage deterministic
+# regardless of shard assignment.
 PORTAL_LOG_FILE="$TMP_DIR/portal-fallback.log"
 PORTAL_PROFILE_FILE="/app/target/llvm-cov-target/unit-shard-portal-%p-%m.profraw"
 
@@ -264,17 +272,20 @@ docker run --rm \
   -e NSS_REDIS_URL=redis://redis:6379 \
   -e NSS_RABBIT_URL=amqp://rabbitmq:5672/%2f \
   "$TEST_IMAGE" \
-  sh -c "\"$TEST_BIN\" --test-threads=1 \"$PORTAL_TEST_FILTER\"" \
+  sh -c "set -e; \
+    PORTAL_FILE=\"/app/scripts/tmp/unit-shards/portal-tests.list\"; \
+    set -- \$(cat \"\$PORTAL_FILE\"); \
+    \"$TEST_BIN\" --test-threads=1 --exact \"\$@\"" \
   >"$PORTAL_LOG_FILE" 2>&1
 
-if ! grep -Eq "router_embedded_fallback_serves_ui_route .* ok" "$PORTAL_LOG_FILE"; then
-  echo "router fallback coverage probe test did not execute successfully" >&2
+if ! grep -Eq "test result: ok\\." "$PORTAL_LOG_FILE"; then
+  echo "portal coverage pass did not execute successfully" >&2
   cat "$PORTAL_LOG_FILE" >&2
   exit 1
 fi
 
 if ! ls target/llvm-cov-target/unit-shard-portal-*.profraw >/dev/null 2>&1; then
-  echo "portal fallback coverage probe did not produce profraw output" >&2
+  echo "portal coverage pass did not produce profraw output" >&2
   ls -la target/llvm-cov-target >&2 || true
   cat "$PORTAL_LOG_FILE" >&2
   exit 1
