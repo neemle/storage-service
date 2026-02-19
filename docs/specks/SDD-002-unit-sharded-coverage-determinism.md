@@ -36,6 +36,8 @@
   zero-test probe runs are treated as failures.
 - AC-10: Portal router uses a named fallback handler instead of an inline closure so fallback coverage is attributed
   to deterministic, directly testable code paths.
+- AC-11: Post-shard portal pass executes each discovered `api::portal::tests::*` test name one-by-one with
+  `--exact` and validates every expected test appears as `... ok` in the pass log.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -56,6 +58,8 @@
   assertion, and portal profile output check.
 - Inline fallback closure counted as a separate uncovered function in some runs -> prevented by using a named fallback
   handler plus direct handler unit coverage.
+- Multi-filter test invocation ambiguity causes partial/zero portal execution -> prevented by per-test exact execution
+  and explicit expected-vs-seen portal test verification.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix
@@ -67,6 +71,7 @@
   - Verify normalized test-list output exists at `scripts/tmp/unit-shards/list-output-clean.log`.
   - Verify portal pass uses `scripts/tmp/unit-shards/portal-tests.list` and reports `test result: ok.`.
   - Verify named fallback handler test `embedded_ui_handler_uses_embedded_dir` passes and contributes coverage.
+  - Verify every portal test listed in `portal-tests.list` appears in `portal-fallback.log` as `test ... ok`.
 - Integration:
   - Not applicable (script-only change).
 - Curl/UI:

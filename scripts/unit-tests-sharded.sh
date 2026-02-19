@@ -274,9 +274,26 @@ docker run --rm \
   "$TEST_IMAGE" \
   sh -c "set -e; \
     PORTAL_FILE=\"/app/scripts/tmp/unit-shards/portal-tests.list\"; \
-    set -- \$(cat \"\$PORTAL_FILE\"); \
-    \"$TEST_BIN\" --test-threads=1 --exact \"\$@\"" \
+    while IFS= read -r test_name; do \
+      [ -n \"\$test_name\" ] || continue; \
+      echo \"running portal test: \$test_name\"; \
+      \"$TEST_BIN\" --test-threads=1 --exact \"\$test_name\"; \
+    done < \"\$PORTAL_FILE\"" \
   >"$PORTAL_LOG_FILE" 2>&1
+
+python3 - <<'PY'
+import re
+from pathlib import Path
+
+expected = [line.strip() for line in Path("scripts/tmp/unit-shards/portal-tests.list").read_text().splitlines() if line.strip()]
+log = Path("scripts/tmp/unit-shards/portal-fallback.log").read_text()
+seen = set(re.findall(r"^test (\S+) \.\.\. ok$", log, flags=re.MULTILINE))
+missing = [name for name in expected if name not in seen]
+if missing:
+    print("portal coverage pass did not execute all expected tests", flush=True)
+    print(f"missing tests: {', '.join(missing)}", flush=True)
+    raise SystemExit(1)
+PY
 
 if ! grep -Eq "test result: ok\\." "$PORTAL_LOG_FILE"; then
   echo "portal coverage pass did not execute successfully" >&2
