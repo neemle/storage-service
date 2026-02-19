@@ -285,7 +285,11 @@ python3 - <<'PY'
 import re
 from pathlib import Path
 
-expected = [line.strip() for line in Path("scripts/tmp/unit-shards/portal-tests.list").read_text().splitlines() if line.strip()]
+expected = [
+    line.strip()
+    for line in Path("scripts/tmp/unit-shards/portal-tests.list").read_text().splitlines()
+    if line.strip()
+]
 log = Path("scripts/tmp/unit-shards/portal-fallback.log").read_text()
 seen = set(re.findall(r"^test (\S+) \.\.\. ok$", log, flags=re.MULTILINE))
 missing = [name for name in expected if name not in seen]
