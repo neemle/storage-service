@@ -104,10 +104,23 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Print checked out commit
+        run: git rev-parse HEAD
       - name: Run backend unit tests
-        env:
-          NSS_TEST_SHARDS: "6"
-        run: ./scripts/unit-tests.sh
+        run: |
+          set -euo pipefail
+          NSS_TEST_SHARDS=6 NSS_TEST_THREADS=1 NSS_TEST_PROFILE=test ./scripts/unit-tests.sh
+
+      - name: Upload backend unit diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-unit-diagnostics
+          if-no-files-found: ignore
+          path: |
+            scripts/tmp/unit-shards
+            target/llvm-cov-target
+            target/llvm-cov-build
 
       - name: Run UI unit tests (dockerized)
         run: ./scripts/ui-unit-tests.sh
