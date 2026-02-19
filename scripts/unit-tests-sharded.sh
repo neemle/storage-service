@@ -39,6 +39,7 @@ mkdir -p "$TMP_DIR"
 TEST_LIST="$TMP_DIR/tests.list"
 TEST_BIN_PATH="$TMP_DIR/test-binary.path"
 LIST_OUTPUT="$TMP_DIR/list-output.log"
+LIST_OUTPUT_CLEAN="$TMP_DIR/list-output-clean.log"
 rm -f "$TMP_DIR"/exit-* "$TMP_DIR"/shard-*.log 2>/dev/null || true
 
 # Clean old coverage data and instrumented build artifacts to avoid stale binaries/profiles.
@@ -61,20 +62,37 @@ docker run --rm \
   sh -c "cargo llvm-cov -p nss_core --lib $PROFILE_ARGS --no-report -- --list" \
   > "$LIST_OUTPUT"
 
-awk '/: test$/{sub(/:$/,"",$1); print $1}' "$LIST_OUTPUT" > "$TEST_LIST"
+python3 - <<'PY'
+import pathlib
+import re
 
-awk '
-  /Running unittests .*nss_core-/ {
-    line = $0
-    sub(/^.*\(/, "", line)
-    sub(/\).*/, "", line)
-    print line
-  }
-' "$LIST_OUTPUT" | tail -n 1 > "$TEST_BIN_PATH"
+tmp = pathlib.Path("scripts/tmp/unit-shards")
+raw = tmp.joinpath("list-output.log").read_text(encoding="utf-8", errors="replace")
+clean = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw).replace("\r", "")
+tmp.joinpath("list-output-clean.log").write_text(clean)
+
+tests = []
+for line in clean.splitlines():
+    stripped = line.strip()
+    match = re.match(r"^(\S+): test$", stripped)
+    if match:
+        tests.append(match.group(1))
+
+tmp.joinpath("tests.list").write_text(
+    "\n".join(tests) + ("\n" if tests else "")
+)
+
+test_bin = ""
+for line in clean.splitlines():
+    match = re.search(r"Running unittests .*?\(([^)]+nss_core-[^)]+)\)", line)
+    if match:
+        test_bin = match.group(1)
+tmp.joinpath("test-binary.path").write_text(test_bin)
+PY
 
 if [ ! -s "$TEST_LIST" ]; then
   echo "no unit tests discovered from --list output" >&2
-  cat "$LIST_OUTPUT" >&2
+  cat "$LIST_OUTPUT_CLEAN" >&2
   exit 1
 fi
 
@@ -226,8 +244,8 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-# Ensure the embedded portal fallback path is exercised in this run.
-PORTAL_FALLBACK_TEST="api::portal::tests::router_embedded_fallback_serves_ui_route"
+# Ensure the embedded portal fallback probe test executes in this run for deterministic coverage.
+PORTAL_TEST_FILTER="router_embedded_fallback_serves_ui_route"
 PORTAL_LOG_FILE="$TMP_DIR/portal-fallback.log"
 PORTAL_PROFILE_FILE="/app/target/llvm-cov-target/unit-shard-portal-%p-%m.profraw"
 
@@ -246,8 +264,21 @@ docker run --rm \
   -e NSS_REDIS_URL=redis://redis:6379 \
   -e NSS_RABBIT_URL=amqp://rabbitmq:5672/%2f \
   "$TEST_IMAGE" \
-  sh -c "\"$TEST_BIN\" --test-threads=1 --exact \"$PORTAL_FALLBACK_TEST\"" \
+  sh -c "\"$TEST_BIN\" --test-threads=1 \"$PORTAL_TEST_FILTER\"" \
   >"$PORTAL_LOG_FILE" 2>&1
+
+if ! grep -Eq "router_embedded_fallback_serves_ui_route .* ok" "$PORTAL_LOG_FILE"; then
+  echo "router fallback coverage probe test did not execute successfully" >&2
+  cat "$PORTAL_LOG_FILE" >&2
+  exit 1
+fi
+
+if ! ls target/llvm-cov-target/unit-shard-portal-*.profraw >/dev/null 2>&1; then
+  echo "portal fallback coverage probe did not produce profraw output" >&2
+  ls -la target/llvm-cov-target >&2 || true
+  cat "$PORTAL_LOG_FILE" >&2
+  exit 1
+fi
 
 # Generate merged report without running tests (use cargo llvm-cov for
 # consistent reporting with the non-sharded path).

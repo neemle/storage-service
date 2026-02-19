@@ -30,6 +30,10 @@
   100% function/line/region coverage.
 - AC-7: Sharded unit script executes `api::portal::tests::router_embedded_fallback_serves_ui_route` in a dedicated
   post-shard pass so merged coverage always includes the embedded fallback path.
+- AC-8: Test discovery parsing strips ANSI control sequences and carriage returns before extracting test names and
+  test binary path.
+- AC-9: Dedicated post-shard fallback probe must prove the fallback test executed and emitted a profile file; silent
+  zero-test probe runs are treated as failures.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -40,11 +44,14 @@
 - No tests discovered from list output -> fail with explicit error.
 - Test binary path cannot be resolved -> fail with explicit error.
 - Any shard exits non-zero -> fail before report generation.
+- Control characters in `--list` output break test extraction -> prevented by normalized parsing before extraction.
 - Profile output clobbered by concurrent writes -> prevented via `%p/%m` profile filename placeholders.
 - Report binary drift from rebuild -> prevented by `llvm-profdata` + `llvm-cov` over the previously discovered
   test binary.
 - Router embedded fallback closure not executed -> prevented by dedicated router-fallback unit test.
 - Router fallback path omitted due shard execution variance -> prevented by dedicated post-shard fallback test run.
+- Dedicated fallback probe matches zero tests -> prevented by explicit probe-log assertion and required portal
+  profile output check.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix
@@ -53,6 +60,8 @@
   - Verify coverage report generation still applies fail-under thresholds.
   - Verify `api/portal.rs` row reports 100% for regions/functions/lines.
   - Verify post-shard fallback test execution log exists at `scripts/tmp/unit-shards/portal-fallback.log`.
+  - Verify normalized test-list output exists at `scripts/tmp/unit-shards/list-output-clean.log`.
+  - Verify fallback probe log includes `router_embedded_fallback_serves_ui_route ... ok`.
 - Integration:
   - Not applicable (script-only change).
 - Curl/UI:

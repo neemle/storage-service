@@ -207,7 +207,7 @@ mod tests {
     };
     use crate::test_support;
     use axum::body::Body;
-    use axum::http::header::ACCEPT_ENCODING;
+    use axum::http::header::{ACCEPT_ENCODING, CONTENT_TYPE};
     use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
     use include_dir::{include_dir, Dir};
     use tower::ServiceExt;
@@ -255,13 +255,18 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
-                    .uri("/app/buckets")
+                    .uri("/__nss_ui_fallback_probe__/deep/link")
                     .body(Body::empty())
                     .expect("request"),
             )
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(content_type, Some("text/html; charset=utf-8"));
     }
 
     #[tokio::test]
