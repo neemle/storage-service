@@ -16,15 +16,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  stage-1-unit:
-    name: Stage 1 - Unit
+  lint:
+    name: Lint & Audit
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
-      - name: Print checked out commit
-        run: git rev-parse HEAD
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -49,6 +46,17 @@ jobs:
 
       - name: Run Rust security audit
         run: ./scripts/security-audit.sh
+
+  stage-1-unit:
+    name: Stage 1 - Unit
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print checked out commit
+        run: git rev-parse HEAD
 
       - name: Set up Docker Buildx for unit test image cache
         uses: docker/setup-buildx-action@v3
@@ -87,23 +95,27 @@ jobs:
             echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } > "$OUT_DIR/meta.txt"
 
+          if [ -f scripts/tmp/unit-coverage.txt ]; then
+            cp scripts/tmp/unit-coverage.txt "$OUT_DIR/unit-coverage.txt"
+          fi
+
           if [ -d scripts/tmp/unit-shards ]; then
             cp -a scripts/tmp/unit-shards "$OUT_DIR/unit-shards"
           fi
 
-          docker compose -p deploy_unit -f deploy/docker-compose.test.yml ps \
+          docker compose -p deploy -f deploy/docker-compose.test.yml ps \
             > "$OUT_DIR/compose-ps.txt" 2>&1 || true
-          docker compose -p deploy_unit -f deploy/docker-compose.test.yml logs \
+          docker compose -p deploy -f deploy/docker-compose.test.yml logs \
             --no-color --tail=400 postgres redis rabbitmq \
             > "$OUT_DIR/compose-services.log" 2>&1 || true
+
+          du -sh target/ > "$OUT_DIR/disk-usage.txt" 2>&1 || true
+          df -h . >> "$OUT_DIR/disk-usage.txt" 2>&1 || true
+          ls -la target/ >> "$OUT_DIR/disk-usage.txt" 2>&1 || true
 
           if [ -d target/llvm-cov-target ]; then
             find target/llvm-cov-target -maxdepth 2 -type f | sort \
               > "$OUT_DIR/llvm-cov-target-files.txt" || true
-          fi
-          if [ -d target/llvm-cov-build ]; then
-            find target/llvm-cov-build -maxdepth 2 -type f | sort \
-              > "$OUT_DIR/llvm-cov-build-files.txt" || true
           fi
 
       - name: Upload backend unit diagnostics

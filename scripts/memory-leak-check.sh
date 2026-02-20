@@ -123,7 +123,6 @@ docker run --rm \
   --network "$NETWORK_NAME" \
   -v "$(pwd):/app" \
   -w /app \
-  -e CARGO_HOME=/app/.cargo \
   -e NSS_MODE=master \
   -e NSS_POSTGRES_DSN="$POSTGRES_DSN" \
   -e NSS_DATA_DIRS="$DATA_DIR_IN_CONTAINER" \
@@ -142,7 +141,6 @@ docker run --rm \
   --network "$NETWORK_NAME" \
   -v "$(pwd):/app" \
   -w /app \
-  -e CARGO_HOME=/app/.cargo \
   "$TOOL_IMAGE" \
   sh -c '/usr/local/cargo/bin/cargo build -p nss'
 
@@ -154,7 +152,6 @@ docker run -d \
   --network "$NETWORK_NAME" \
   -v "$(pwd):/app" \
   -w /app \
-  -e CARGO_HOME=/app/.cargo \
   -e NSS_MODE=master \
   -e NSS_POSTGRES_DSN="$POSTGRES_DSN" \
   -e NSS_DATA_DIRS="$DATA_DIR_IN_CONTAINER" \

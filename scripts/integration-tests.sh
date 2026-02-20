@@ -95,20 +95,14 @@ docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm master /app/nss --
 docker run --rm \
   --network "$NETWORK_NAME" \
   -v "$(pwd):/app" \
-  -v "$(pwd)/.rustup:/root/.rustup" \
   -w /app \
-  -e CARGO_HOME=/app/.cargo \
-  -e RUSTUP_NONINTERACTIVE=1 \
+  -e CARGO_INCREMENTAL=0 \
   -e RUST_BACKTRACE=1 \
   -e NSS_POSTGRES_DSN=postgres://nss:nss@postgres:5432/nss?sslmode=disable \
   -e NSS_REDIS_URL=redis://redis:6379 \
   -e NSS_RABBIT_URL=amqp://rabbitmq:5672/%2f \
-  -e CARGO_INCREMENTAL=1 \
   "$TEST_IMAGE" \
-  sh -c "if ! cargo llvm-cov --version >/dev/null 2>&1; then cargo install cargo-llvm-cov --locked; fi && \
-    if ! rustup component list --installed | grep -q '^llvm-tools-preview'; then \
-      rustup component add llvm-tools-preview; \
-    fi && \
+  sh -c "rustc -vV && cargo llvm-cov --version && \
     mkdir -p scripts/tmp && \
     cargo llvm-cov -p nss_core ${PROFILE_ARGS} \
       --fail-under-lines ${INTEGRATION_COVERAGE_LINES} \

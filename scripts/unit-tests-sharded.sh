@@ -53,10 +53,8 @@ rm -f default_*.profraw 2>/dev/null || true
 
 docker run --rm \
   -v "$(pwd):/app" \
-  -v "$(pwd)/.rustup:/root/.rustup" \
   -w /app \
-  -e CARGO_HOME=/app/.cargo \
-  -e RUSTUP_NONINTERACTIVE=1 \
+  -e CARGO_INCREMENTAL=0 \
   -e CARGO_LLVM_COV_TARGET_DIR=/app/target/llvm-cov-target \
   -e CARGO_LLVM_COV_BUILD_DIR=/app/target/llvm-cov-build \
   -e LLVM_PROFILE_FILE=/app/target/llvm-cov-target/unit-list.profraw \
@@ -212,10 +210,7 @@ for i in $(seq 1 "$SHARDS"); do
       --name "${BASE_PROJECT}_unit_runner_${i}" \
       --network "$NETWORK_NAME" \
       -v "$(pwd):/app" \
-      -v "$(pwd)/.rustup:/root/.rustup" \
       -w /app \
-      -e CARGO_HOME=/app/.cargo \
-      -e RUSTUP_NONINTERACTIVE=1 \
       -e RUST_BACKTRACE=1 \
       -e CARGO_INCREMENTAL=0 \
       -e LLVM_PROFILE_FILE="$LLVM_PROFILE_FILE" \
@@ -262,10 +257,7 @@ docker run --rm \
   --name "${BASE_PROJECT}_unit_runner_portal_fallback" \
   --network "$NETWORK_NAME" \
   -v "$(pwd):/app" \
-  -v "$(pwd)/.rustup:/root/.rustup" \
   -w /app \
-  -e CARGO_HOME=/app/.cargo \
-  -e RUSTUP_NONINTERACTIVE=1 \
   -e RUST_BACKTRACE=1 \
   -e CARGO_INCREMENTAL=0 \
   -e LLVM_PROFILE_FILE="$PORTAL_PROFILE_FILE" \
@@ -318,10 +310,7 @@ fi
 
 docker run --rm \
   -v "$(pwd):/app" \
-  -v "$(pwd)/.rustup:/root/.rustup" \
   -w /app \
-  -e CARGO_HOME=/app/.cargo \
-  -e RUSTUP_NONINTERACTIVE=1 \
   -e RUST_BACKTRACE=1 \
   -e NSS_TEST_BIN="$TEST_BIN" \
   "$TEST_IMAGE" \

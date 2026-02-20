@@ -55,10 +55,8 @@ mkdir -p target/llvm-cov-build
 
 docker run --rm \
   -v "$(pwd):/app" \
-  -v "$(pwd)/.rustup:/root/.rustup" \
   -w /app \
-  -e CARGO_HOME=/app/.cargo \
-  -e RUSTUP_NONINTERACTIVE=1 \
+  -e CARGO_INCREMENTAL=0 \
   -e CARGO_LLVM_COV_TARGET_DIR=/app/target/llvm-cov-target \
   -e CARGO_LLVM_COV_BUILD_DIR=/app/target/llvm-cov-build \
   "$TEST_IMAGE" \
@@ -185,12 +183,9 @@ for i in $(seq 1 "$SHARDS"); do
       --name "${BASE_PROJECT}_int_runner_${i}" \
       --network "$NETWORK_NAME" \
       -v "$(pwd):/app" \
-      -v "$(pwd)/.rustup:/root/.rustup" \
       -w /app \
-      -e CARGO_HOME=/app/.cargo \
-      -e RUSTUP_NONINTERACTIVE=1 \
       -e RUST_BACKTRACE=1 \
-      -e CARGO_INCREMENTAL=1 \
+      -e CARGO_INCREMENTAL=0 \
       -e LLVM_PROFILE_FILE="$LLVM_PROFILE_FILE" \
       -e NSS_POSTGRES_DSN=postgres://nss:nss@postgres:5432/nss?sslmode=disable \
       -e NSS_REDIS_URL=redis://redis:6379 \
@@ -222,10 +217,7 @@ fi
 
 docker run --rm \
   -v "$(pwd):/app" \
-  -v "$(pwd)/.rustup:/root/.rustup" \
   -w /app \
-  -e CARGO_HOME=/app/.cargo \
-  -e RUSTUP_NONINTERACTIVE=1 \
   -e RUST_BACKTRACE=1 \
   -e NSS_TEST_BIN="$TEST_BIN" \
   "$TEST_IMAGE" \
