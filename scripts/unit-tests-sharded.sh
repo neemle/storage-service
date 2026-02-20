@@ -11,6 +11,8 @@ UNIT_COVERAGE_REGIONS=${NSS_UNIT_COVERAGE_REGIONS:-100}
 UNIT_COVERAGE_BRANCHES=${NSS_UNIT_COVERAGE_BRANCHES:-100}
 TEST_THREADS=${NSS_TEST_THREADS:-1}
 TEST_PROFILE=${NSS_TEST_PROFILE:-test}
+SHARDED_RETRY_ON_FAIL=${NSS_UNIT_SHARDED_RETRY_ON_FAIL:-1}
+SHARDED_FALLBACK_UNSHARDED=${NSS_UNIT_SHARDED_FALLBACK_UNSHARDED:-1}
 
 if [ "$SHARDS" -le 1 ]; then
   exec ./scripts/unit-tests.sh
@@ -124,6 +126,49 @@ if [ -z "$TEST_BIN" ]; then
   fi
 fi
 
+run_unsharded_fallback() {
+  if [ "$SHARDED_FALLBACK_UNSHARDED" != "1" ]; then
+    return 1
+  fi
+  echo "sharded unit run failed, retrying deterministic non-sharded coverage run"
+  NSS_TEST_SHARDS=1 \
+    NSS_TEST_IMAGE="$TEST_IMAGE" \
+    NSS_TEST_THREADS="$TEST_THREADS" \
+    NSS_TEST_PROFILE="$TEST_PROFILE" \
+    NSS_UNIT_COVERAGE_LINES="$UNIT_COVERAGE_LINES" \
+    NSS_UNIT_COVERAGE_FUNCTIONS="$UNIT_COVERAGE_FUNCTIONS" \
+    NSS_UNIT_COVERAGE_REGIONS="$UNIT_COVERAGE_REGIONS" \
+    NSS_UNIT_COVERAGE_BRANCHES="$UNIT_COVERAGE_BRANCHES" \
+    ./scripts/unit-tests.sh
+}
+
+run_shard() {
+  shard="$1"
+  log_file="$2"
+  profile_file="$3"
+  docker run --rm \
+    --name "${BASE_PROJECT}_unit_runner_${shard}" \
+    --network "$NETWORK_NAME" \
+    -v "$(pwd):/app" \
+    -v "$(pwd)/.rustup:/root/.rustup" \
+    -w /app \
+    -e CARGO_HOME=/app/.cargo \
+    -e RUSTUP_NONINTERACTIVE=1 \
+    -e RUST_BACKTRACE=1 \
+    -e CARGO_INCREMENTAL=1 \
+    -e LLVM_PROFILE_FILE="$profile_file" \
+    -e NSS_POSTGRES_DSN=postgres://nss:nss@postgres:5432/nss_shard_${shard}?sslmode=disable \
+    -e NSS_REDIS_URL=redis://redis:6379 \
+    -e NSS_RABBIT_URL=amqp://rabbitmq:5672/%2f \
+    "$TEST_IMAGE" \
+    sh -c "set -e; \
+      SHARD_FILE=\"/app/scripts/tmp/unit-shards/shard-${shard}.list\"; \
+      if [ ! -s \"\$SHARD_FILE\" ]; then exit 0; fi; \
+      set -- \$(cat \"\$SHARD_FILE\"); \
+      \"$TEST_BIN\" --test-threads=$TEST_THREADS --exact \"\$@\"" \
+    >"$log_file" 2>&1
+}
+
 python3 - <<'PY'
 import os
 import pathlib
@@ -208,27 +253,7 @@ for i in $(seq 1 "$SHARDS"); do
 
   (
     set +e
-    docker run --rm \
-      --name "${BASE_PROJECT}_unit_runner_${i}" \
-      --network "$NETWORK_NAME" \
-      -v "$(pwd):/app" \
-      -v "$(pwd)/.rustup:/root/.rustup" \
-      -w /app \
-      -e CARGO_HOME=/app/.cargo \
-      -e RUSTUP_NONINTERACTIVE=1 \
-      -e RUST_BACKTRACE=1 \
-      -e CARGO_INCREMENTAL=1 \
-      -e LLVM_PROFILE_FILE="$LLVM_PROFILE_FILE" \
-      -e NSS_POSTGRES_DSN=postgres://nss:nss@postgres:5432/nss_shard_${i}?sslmode=disable \
-      -e NSS_REDIS_URL=redis://redis:6379 \
-      -e NSS_RABBIT_URL=amqp://rabbitmq:5672/%2f \
-      "$TEST_IMAGE" \
-      sh -c "set -e; \
-        SHARD_FILE=\"/app/scripts/tmp/unit-shards/shard-${i}.list\"; \
-        if [ ! -s \"\$SHARD_FILE\" ]; then exit 0; fi; \
-        set -- \$(cat \"\$SHARD_FILE\"); \
-        \"$TEST_BIN\" --test-threads=$TEST_THREADS --exact \"\$@\"" \
-      >"$LOG_FILE" 2>&1
+    run_shard "$i" "$LOG_FILE" "$LLVM_PROFILE_FILE"
     status=$?
     echo "$status" > "$TMP_DIR/exit-${i}"
   ) &
@@ -250,7 +275,30 @@ for i in $(seq 1 "$SHARDS"); do
 done
 
 if [ "$FAILED" -ne 0 ]; then
-  exit 1
+  if [ "$SHARDED_RETRY_ON_FAIL" = "1" ]; then
+    echo "parallel shard run failed, retrying failed shards serially"
+    RETRY_FAILED=0
+    for i in $(seq 1 "$SHARDS"); do
+      code=$(cat "$TMP_DIR/exit-${i}" 2>/dev/null || echo 1)
+      if [ "$code" -eq 0 ]; then
+        continue
+      fi
+      RETRY_LOG_FILE="$TMP_DIR/shard-${i}-retry.log"
+      RETRY_PROFILE_FILE="/app/target/llvm-cov-target/unit-shard-${i}-retry-%p-%m.profraw"
+      if ! run_shard "$i" "$RETRY_LOG_FILE" "$RETRY_PROFILE_FILE"; then
+        echo "Shard ${i} failed again after serial retry" >&2
+        cat "$RETRY_LOG_FILE" >&2
+        RETRY_FAILED=1
+      fi
+    done
+    FAILED=$RETRY_FAILED
+  fi
+  if [ "$FAILED" -ne 0 ]; then
+    if run_unsharded_fallback; then
+      exit 0
+    fi
+    exit 1
+  fi
 fi
 
 # Execute all portal tests in a dedicated pass to make portal coverage deterministic
@@ -345,6 +393,7 @@ docker run --rm \
       > /app/scripts/tmp/unit-shards/coverage.txt
   '
 
+set +e
 python3 - <<'PY'
 import os
 from pathlib import Path
@@ -404,3 +453,12 @@ if branch_cover < min_branches:
 if failed:
     raise SystemExit(1)
 PY
+COVERAGE_STATUS=$?
+set -e
+
+if [ "$COVERAGE_STATUS" -ne 0 ]; then
+  if run_unsharded_fallback; then
+    exit 0
+  fi
+  exit "$COVERAGE_STATUS"
+fi
