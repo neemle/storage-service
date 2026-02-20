@@ -406,14 +406,17 @@ mod tests {
         assert_eq!(response.status(), axum::http::StatusCode::OK);
     }
 
-    #[tokio::test]
-    async fn embedded_ui_handler_uses_embedded_dir() {
-        let response = embedded_ui(
+    #[test]
+    fn embedded_ui_handler_uses_embedded_dir() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let response = runtime.block_on(embedded_ui(
             Method::GET,
             "/__nss_ui_fallback_probe__/deep/link".parse().expect("uri"),
             HeaderMap::new(),
-        )
-        .await;
+        ));
         assert_eq!(response.status(), StatusCode::OK);
     }
 

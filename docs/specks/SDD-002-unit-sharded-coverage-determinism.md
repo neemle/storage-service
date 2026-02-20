@@ -43,6 +43,8 @@
   deterministic function attribution due inlining decisions.
 - AC-13: Join token consumption must lock/select only currently valid (unused, unexpired) rows so repeated token
   hashes from prior tests cannot produce nondeterministic `401` responses in sharded runs.
+- AC-14: Portal handler coverage test for `embedded_ui` must execute through an explicit Tokio runtime in a
+  plain `#[test]` to avoid macro-wrapper attribution variance in CI coverage builds.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -69,6 +71,8 @@
   `#[cfg_attr(test, inline(never))]` on portal helper functions.
 - `consume_join_token` chooses an arbitrary stale row for duplicate token hashes -> prevented by filtering/locking
   only unused + unexpired rows before marking token as used.
+- Tokio test macro wrapper attribution for `embedded_ui` helper path can fluctuate in instrumented builds ->
+  prevented by explicit-runtime plain test for direct `embedded_ui` execution.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix
@@ -84,6 +88,8 @@
   - Verify `api/portal.rs` helper functions are annotated with `#[cfg_attr(test, inline(never))]`.
   - Verify duplicate `join_tokens.token_hash` rows still consume the latest valid unused row and do not return `401`
     when a valid row exists.
+  - Verify `embedded_ui_handler_uses_embedded_dir` executes as a plain `#[test]` using explicit Tokio runtime and
+    contributes deterministic handler coverage.
 - Integration:
   - Not applicable (script-only change).
 - Curl/UI:
