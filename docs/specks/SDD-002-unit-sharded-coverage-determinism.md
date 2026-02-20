@@ -6,6 +6,7 @@
 - Keep coverage thresholds at 100% lines/functions/regions and fix only sharded orchestration behavior.
 - Ensure `api/portal.rs` router embedded fallback path is explicitly exercised in unit tests so coverage remains
   deterministic across CI runs.
+- Eliminate sharded-run nondeterminism caused by repeated cluster join token hashes selecting stale consumed rows.
 
 ## Non-goals
 - Changing coverage thresholds.
@@ -40,6 +41,8 @@
   `--exact` and validates every expected test appears as `... ok` in the pass log.
 - AC-12: Portal helper functions use `#[cfg_attr(test, inline(never))]` so test/coverage builds cannot lose
   deterministic function attribution due inlining decisions.
+- AC-13: Join token consumption must lock/select only currently valid (unused, unexpired) rows so repeated token
+  hashes from prior tests cannot produce nondeterministic `401` responses in sharded runs.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -64,6 +67,8 @@
   and explicit expected-vs-seen portal test verification.
 - Compiler inlining in test binaries causes occasional function-attribution misses -> prevented by
   `#[cfg_attr(test, inline(never))]` on portal helper functions.
+- `consume_join_token` chooses an arbitrary stale row for duplicate token hashes -> prevented by filtering/locking
+  only unused + unexpired rows before marking token as used.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix
@@ -77,6 +82,8 @@
   - Verify named fallback handler test `embedded_ui_handler_uses_embedded_dir` passes and contributes coverage.
   - Verify every portal test listed in `portal-tests.list` appears in `portal-fallback.log` as `test ... ok`.
   - Verify `api/portal.rs` helper functions are annotated with `#[cfg_attr(test, inline(never))]`.
+  - Verify duplicate `join_tokens.token_hash` rows still consume the latest valid unused row and do not return `401`
+    when a valid row exists.
 - Integration:
   - Not applicable (script-only change).
 - Curl/UI:

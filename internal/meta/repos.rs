@@ -1538,21 +1538,24 @@ impl Repo {
     ) -> Result<Option<JoinToken>, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         let token = sqlx::query_as::<_, JoinToken>(
-            "SELECT * FROM join_tokens WHERE token_hash=$1 FOR UPDATE",
+            "SELECT * FROM join_tokens
+             WHERE token_hash=$1 AND used_at IS NULL AND expires_at > $2
+             ORDER BY expires_at DESC, token_id DESC
+             LIMIT 1
+             FOR UPDATE",
         )
         .bind(token_hash)
+        .bind(now)
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(token_row) = token.clone() {
-            if token_row.used_at.is_none() && token_row.expires_at > now {
-                sqlx::query("UPDATE join_tokens SET used_at=$1 WHERE token_id=$2")
-                    .bind(now)
-                    .bind(token_row.token_id)
-                    .execute(&mut *tx)
-                    .await?;
-                commit_tx(tx).await?;
-                return Ok(Some(token_row));
-            }
+            sqlx::query("UPDATE join_tokens SET used_at=$1 WHERE token_id=$2")
+                .bind(now)
+                .bind(token_row.token_id)
+                .execute(&mut *tx)
+                .await?;
+            commit_tx(tx).await?;
+            return Ok(Some(token_row));
         }
         commit_tx(tx).await?;
         Ok(None)
@@ -2673,6 +2676,19 @@ mod tests {
             .await
             .expect("consume");
         assert!(consumed.is_none());
+
+        let replacement = repo
+            .create_join_token(token_hash, Utc::now() + Duration::minutes(10))
+            .await
+            .expect("token");
+        let consumed = repo
+            .consume_join_token(token_hash, Utc::now())
+            .await
+            .expect("consume");
+        assert_eq!(
+            consumed.as_ref().map(|row| row.token_id),
+            Some(replacement.token_id)
+        );
 
         let expired_hash = "expired";
         repo.create_join_token(expired_hash, Utc::now() - Duration::minutes(1))

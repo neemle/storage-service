@@ -227,6 +227,7 @@ mod tests {
 
     static TEST_GZIP_UI: Dir = include_dir!("$CARGO_MANIFEST_DIR/tests/fixtures/portal-ui-gzip");
 
+    #[inline(never)]
     async fn embedded_ui_response(
         method: Method,
         uri: &str,
@@ -491,6 +492,7 @@ mod tests {
         assert_default_types();
     }
 
+    #[inline(never)]
     fn assert_script_and_json_types() {
         assert_eq!(
             content_type_for("bundle.mjs"),
@@ -506,6 +508,7 @@ mod tests {
         );
     }
 
+    #[inline(never)]
     fn assert_image_types() {
         assert_eq!(content_type_for("icon.svg"), "image/svg+xml");
         assert_eq!(content_type_for("photo.jpg"), "image/jpeg");
@@ -515,6 +518,7 @@ mod tests {
         assert_eq!(content_type_for("favicon.ico"), "image/x-icon");
     }
 
+    #[inline(never)]
     fn assert_font_types() {
         assert_eq!(content_type_for("font.woff2"), "font/woff2");
         assert_eq!(content_type_for("font.woff"), "font/woff");
@@ -525,6 +529,7 @@ mod tests {
         );
     }
 
+    #[inline(never)]
     fn assert_default_types() {
         assert_eq!(
             content_type_for("asset.unknown"),
