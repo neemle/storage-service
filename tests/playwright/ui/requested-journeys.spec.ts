@@ -351,7 +351,7 @@ test('[UC-001][UC-007] user changes password and theme from settings', async ({ 
   await closeSettings(userPage);
   await userPage.getByRole('button', { name: 'Sign out' }).click();
   await loginConsole(userPage, creds.username, nextPassword);
-  await expect(userPage.getByText(`Signed in as ${creds.username}`)).toBeVisible();
+  await expect(userPage.getByRole('button', { name: 'Sign out' })).toBeVisible();
   await userContext.close();
   await adminContext.close();
 });

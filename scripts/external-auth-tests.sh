@@ -7,7 +7,43 @@ PLAYWRIGHT_IMAGE=${PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.58.2-jammy}
 RESULTS_ROOT=${NSS_TEST_RESULTS_DIR:-test-results}
 RESULTS_DIR="${RESULTS_ROOT}/external-auth"
 MODES=${NSS_EXTERNAL_AUTH_MODES:-"oidc oauth2 saml2"}
+PROJECTS=${NSS_PLAYWRIGHT_PROJECTS:-ui-desktop-chromium}
 CURRENT_PROJECT=""
+PLAYWRIGHT_RUN_SCRIPT=$(cat <<'EOF'
+set -e
+npm ci
+args=""
+for project in $(printf "%s\n" "$NSS_PLAYWRIGHT_PROJECTS" | tr "," " "); do
+  args="$args --project=$project"
+done
+npx playwright test ui/external-auth.spec.ts $args
+report_file="test-results/playwright-report.json"
+if [ ! -f "$report_file" ]; then
+  echo "Playwright JSON report not found for external auth" >&2
+  exit 1
+fi
+unexpected=$(node -e "
+  const fs = require(\"fs\");
+  const report = JSON.parse(fs.readFileSync(process.argv[1], \"utf8\"));
+  console.log(report.stats?.unexpected ?? 0);
+" "$report_file")
+if [ "$unexpected" -gt 0 ]; then
+  echo "Playwright reported $unexpected unexpected external auth failures" >&2
+  exit 1
+fi
+for project in $(printf "%s\n" "$NSS_PLAYWRIGHT_PROJECTS" | tr "," " "); do
+  if ! grep -Eq "\"projectName\"[[:space:]]*:[[:space:]]*\"$project\"" "$report_file"; then
+    echo "Playwright project $project was not executed for external auth" >&2
+    exit 1
+  fi
+done
+videos=$(find test-results -type f -name "*.webm" | wc -l | tr -d " ")
+if [ "$videos" -lt 1 ]; then
+  echo "no Playwright videos generated for external auth" >&2
+  exit 1
+fi
+EOF
+)
 
 copy_results() {
   mode="$1"
@@ -59,6 +95,7 @@ wait_http() {
 run_playwright() {
   network="$1"
   mode="$2"
+  projects="$3"
   docker run --rm \
     --network "$network" \
     -e NSS_UI_URL="http://master:9001" \
@@ -67,23 +104,16 @@ run_playwright() {
     -e NSS_EXTERNAL_IDP_URL="http://keycloak:8080" \
     -e NSS_EXTERNAL_USER="admin" \
     -e NSS_EXTERNAL_PASSWORD="admin" \
-    -v "$(pwd)/tests/playwright:/tests" \
-    -w /tests \
+    -e NSS_PLAYWRIGHT_PROJECTS="$projects" \
+    -v "$(pwd):/workspace" \
+    -w /workspace/tests/playwright \
     "$PLAYWRIGHT_IMAGE" \
-    sh -lc '
-      set -e
-      npm ci
-      npx playwright test ui/external-auth.spec.ts --project=ui
-      videos=$(find test-results -type f -name "*.webm" | wc -l | tr -d " ")
-      if [ "$videos" -lt 1 ]; then
-        echo "no Playwright videos generated for external auth" >&2
-        exit 1
-      fi
-    '
+    sh -lc "$PLAYWRIGHT_RUN_SCRIPT"
 }
 
 run_mode() {
   mode="$1"
+  projects="$2"
   project="nss-auth-${mode}"
   network="${project}_default"
   CURRENT_PROJECT="$project"
@@ -96,7 +126,7 @@ run_mode() {
   wait_http "$network" "http://keycloak:8080/realms/nss/.well-known/openid-configuration" "keycloak"
 
   rm -rf tests/playwright/test-results tests/playwright/playwright-report
-  run_playwright "$network" "$mode"
+  run_playwright "$network" "$mode" "$projects"
   copy_results "$mode"
   down_project "$project"
   CURRENT_PROJECT=""
@@ -105,7 +135,7 @@ run_mode() {
 mkdir -p "$RESULTS_DIR"
 for mode in $MODES; do
   echo "running external auth test for mode: ${mode}"
-  run_mode "$mode"
+  run_mode "$mode" "$PROJECTS"
 done
 
-echo "external auth tests passed for modes: $MODES"
+echo "external auth tests passed for modes: $MODES (projects: $PROJECTS)"

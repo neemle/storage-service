@@ -140,6 +140,15 @@ docker run --rm \
       echo "Playwright JSON report not found" >&2
       exit 1
     fi
+    unexpected=$(node -e "
+      const fs = require(\"fs\");
+      const report = JSON.parse(fs.readFileSync(process.argv[1], \"utf8\"));
+      console.log(report.stats?.unexpected ?? 0);
+    " "$report_file")
+    if [ "$unexpected" -gt 0 ]; then
+      echo "Playwright reported $unexpected unexpected failures" >&2
+      exit 1
+    fi
     for project in $projects; do
       if ! grep -Eq "\"projectName\"[[:space:]]*:[[:space:]]*\"$project\"" "$report_file"; then
         echo "Playwright project $project was not executed" >&2

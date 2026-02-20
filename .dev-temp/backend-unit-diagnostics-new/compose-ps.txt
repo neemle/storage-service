@@ -1,0 +1,3 @@
+NAME                     IMAGE                          COMMAND                  SERVICE    CREATED              STATUS              PORTS
+deploy_unit-rabbitmq-1   rabbitmq:4-management-alpine   "docker-entrypoint.s…"   rabbitmq   About a minute ago   Up About a minute   4369/tcp, 5671/tcp, 15671/tcp, 15691-15692/tcp, 25672/tcp, 0.0.0.0:32770->5672/tcp, [::]:32770->5672/tcp, 0.0.0.0:32771->15672/tcp, [::]:32771->15672/tcp
+deploy_unit-redis-1      redis:7-alpine                 "docker-entrypoint.s…"   redis      About a minute ago   Up About a minute   0.0.0.0:32769->6379/tcp, [::]:32769->6379/tcp
