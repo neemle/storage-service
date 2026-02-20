@@ -16,28 +16,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality-gate:
-    name: Quality Gate
+  stage-1-unit:
+    name: Stage 1 - Unit
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check line and function limits
-        run: python3 scripts/quality-check.py
-
-  security-audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
+      - name: Print checked out commit
+        run: git rev-parse HEAD
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.93"
           components: rustfmt, clippy
+
+      - name: Check line and function limits
+        run: python3 scripts/quality-check.py
 
       - name: Enforce Rust format
         run: cargo fmt --all -- --check
@@ -53,59 +49,6 @@ jobs:
 
       - name: Run Rust security audit
         run: ./scripts/security-audit.sh
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: security-audit
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.93"
-
-      - name: Build Rust workspace
-        run: cargo build --workspace --locked
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: web/console-ui/package-lock.json
-
-      - name: Build console UI
-        run: |
-          cd web/console-ui
-          npm ci
-          npm run build
-
-  distroless-verify:
-    name: Distroless Verification
-    runs-on: ubuntu-latest
-    needs: build
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Verify master distroless static image
-        run: ./scripts/verify-distroless.sh nss-ci-master ${{ github.sha }} master
-
-      - name: Verify replica distroless static image
-        run: ./scripts/verify-distroless.sh nss-ci-replica ${{ github.sha }} replica
-
-  stage-1-unit:
-    name: Stage 1 - Unit
-    runs-on: ubuntu-latest
-    needs: distroless-verify
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - name: Print checked out commit
-        run: git rev-parse HEAD
 
       - name: Set up Docker Buildx for unit test image cache
         uses: docker/setup-buildx-action@v3
@@ -125,6 +68,8 @@ jobs:
           set -euo pipefail
           NSS_TEST_IMAGE=nss-test-runner:ci-cached \
           NSS_TEST_SHARDS=6 NSS_TEST_THREADS=1 NSS_TEST_PROFILE=test \
+          NSS_UNIT_COVERAGE_LINES=100 NSS_UNIT_COVERAGE_FUNCTIONS=100 \
+          NSS_UNIT_COVERAGE_REGIONS=100 NSS_UNIT_COVERAGE_BRANCHES=100 \
           ./scripts/unit-tests.sh
 
       - name: Prepare backend unit diagnostics
@@ -183,14 +128,27 @@ jobs:
     name: Stage 2 - Integration
     runs-on: ubuntu-latest
     needs: stage-1-unit
-    timeout-minutes: 75
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+
       - name: Run backend integration tests
-        run: ./scripts/integration-tests.sh
+        run: |
+          NSS_INTEGRATION_COVERAGE_LINES=100 NSS_INTEGRATION_COVERAGE_FUNCTIONS=100 \
+          NSS_INTEGRATION_COVERAGE_REGIONS=100 NSS_INTEGRATION_COVERAGE_BRANCHES=100 \
+          ./scripts/integration-tests.sh
 
       - name: Run UI integration tests (dockerized)
         run: ./scripts/ui-integration-tests.sh
+
+      - name: Run external auth infrastructure tests
+        run: ./scripts/external-auth-tests.sh
+
+      - name: Run cluster tests
+        run: ./scripts/cluster-tests.sh
+
+      - name: Run memory leak checks
+        run: ./scripts/memory-leak-check.sh
 
       - name: Upload UI integration artifacts
         if: always()
@@ -200,17 +158,6 @@ jobs:
           if-no-files-found: ignore
           path: test-results/ui-integration
 
-  stage-2a-external-auth:
-    name: Stage 2A - External Auth
-    runs-on: ubuntu-latest
-    needs: stage-2-integration
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run external auth infrastructure tests
-        run: ./scripts/external-auth-tests.sh
-
       - name: Upload external auth artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -218,27 +165,6 @@ jobs:
           name: external-auth-artifacts
           if-no-files-found: ignore
           path: test-results/external-auth
-
-  stage-2b-cluster:
-    name: Stage 2B - Cluster
-    runs-on: ubuntu-latest
-    needs: stage-2a-external-auth
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run cluster tests
-        run: ./scripts/cluster-tests.sh
-
-  stage-2c-memcheck:
-    name: Stage 2C - Memcheck
-    runs-on: ubuntu-latest
-    needs: stage-2b-cluster
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run memory leak checks
-        run: ./scripts/memory-leak-check.sh
 
       - name: Upload memcheck artifacts
         if: always()
@@ -251,12 +177,14 @@ jobs:
   stage-3-curl:
     name: Stage 3 - Curl Runtime/Dev
     runs-on: ubuntu-latest
-    needs: stage-2c-memcheck
+    needs: stage-2-integration
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
       - name: Run curl tests
         run: ./scripts/curl-tests.sh
+
       - name: Run integration curl journey tests
         run: ./scripts/it.sh
 
@@ -264,7 +192,7 @@ jobs:
     name: Stage 4 - Base UI
     runs-on: ubuntu-latest
     needs: stage-3-curl
-    timeout-minutes: 75
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -285,11 +213,11 @@ jobs:
     name: Stage 5 - UI
     runs-on: ubuntu-latest
     needs: stage-4-base-ui
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run full UI Playwright tests (base + ui)
+      - name: Run full UI Playwright tests
         env:
           NSS_PLAYWRIGHT_PROJECTS: base ui
         run: ./scripts/ui-tests.sh
@@ -309,6 +237,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
       - name: Run runtime curl tests
         run: ./scripts/runtime-tests.sh
 
@@ -316,9 +245,15 @@ jobs:
     name: Stage 7 - Production Fullstack
     runs-on: ubuntu-latest
     needs: stage-6-runtime
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify master distroless static image
+        run: ./scripts/verify-distroless.sh nss-ci-master ${{ github.sha }} master
+
+      - name: Verify replica distroless static image
+        run: ./scripts/verify-distroless.sh nss-ci-replica ${{ github.sha }} replica
 
       - name: Run production tests
         run: ./scripts/production-tests.sh

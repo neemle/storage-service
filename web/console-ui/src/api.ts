@@ -52,19 +52,7 @@ import {
   isUser,
   isUserArray
 } from './validators';
-
-declare global {
-  interface Window {
-    __API_BASE__?: string;
-    __CONSOLE_API_BASE__?: string;
-    __ADMIN_API_BASE__?: string;
-  }
-}
-
-const baseUrl =
-  typeof window === 'undefined'
-    ? ''
-    : window.__API_BASE__ ?? window.__CONSOLE_API_BASE__ ?? window.__ADMIN_API_BASE__ ?? '';
+import { getApiBaseUrl } from './settings';
 let authToken: string | null = null;
 
 export interface CreateBackupPolicyPayload {
@@ -133,7 +121,7 @@ function buildHeaders(initHeaders?: HeadersInit): Record<string, string> {
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
     credentials: 'include',
     ...init,
     headers: buildHeaders(init?.headers)
@@ -158,7 +146,7 @@ async function apiFetch(path: string, init?: RequestInit): Promise<unknown> {
 }
 
 async function apiFetchBlob(path: string, init?: RequestInit): Promise<Blob> {
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
     credentials: 'include',
     ...init,
     headers: buildHeaders(init?.headers)

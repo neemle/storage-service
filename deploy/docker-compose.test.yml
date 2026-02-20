@@ -46,8 +46,8 @@ services:
       - "0:9001"
       - "0:9003"
       - "0:9100"
-    volumes:
-      - master-data:/data
+    tmpfs:
+      - /data:rw,exec,nosuid,nodev,mode=1777
 
   join-token-seed:
     image: postgres:18-alpine
@@ -96,8 +96,8 @@ services:
       - "0:9000"
       - "0:9010"
       - "0:9100"
-    volumes:
-      - replica-data:/data
+    tmpfs:
+      - /data:rw,exec,nosuid,nodev,mode=1777
 
   redis:
     image: redis:7-alpine
@@ -113,7 +113,3 @@ services:
     ports:
       - "0:5672"
       - "0:15672"
-
-volumes:
-  master-data:
-  replica-data:

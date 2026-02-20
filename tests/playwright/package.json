@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
-    "test:base": "playwright test --project=base",
-    "test:ui": "playwright test --project=ui"
+    "test:base": "playwright test --project=base-desktop-chromium --project=base-tablet-portrait --project=base-tablet-landscape --project=base-mobile-iphone --project=base-mobile-pixel --project=base-mobile-samsung",
+    "test:ui": "playwright test --project=ui-desktop-chromium --project=ui-tablet-portrait --project=ui-tablet-landscape --project=ui-mobile-iphone --project=ui-mobile-pixel --project=ui-mobile-samsung"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

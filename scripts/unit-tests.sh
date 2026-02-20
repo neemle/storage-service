@@ -9,6 +9,7 @@ TEST_IMAGE=${NSS_TEST_IMAGE:-}
 UNIT_COVERAGE_LINES=${NSS_UNIT_COVERAGE_LINES:-100}
 UNIT_COVERAGE_FUNCTIONS=${NSS_UNIT_COVERAGE_FUNCTIONS:-100}
 UNIT_COVERAGE_REGIONS=${NSS_UNIT_COVERAGE_REGIONS:-100}
+UNIT_COVERAGE_BRANCHES=${NSS_UNIT_COVERAGE_BRANCHES:-100}
 TEST_THREADS=${NSS_TEST_THREADS:-1}
 TEST_PROFILE=${NSS_TEST_PROFILE:-test}
 UNIT_SHARDS=${NSS_TEST_SHARDS:-1}
@@ -106,7 +107,44 @@ docker run --rm \
     if ! rustup component list --installed | grep -q '^llvm-tools-preview'; then \
       rustup component add llvm-tools-preview; \
     fi && \
+    mkdir -p scripts/tmp && \
     cargo llvm-cov -p nss_core --lib ${PROFILE_ARGS} \
       --fail-under-lines ${UNIT_COVERAGE_LINES} \
       --fail-under-functions ${UNIT_COVERAGE_FUNCTIONS} \
-      --fail-under-regions ${UNIT_COVERAGE_REGIONS} -- --test-threads=${TEST_THREADS}"
+      --fail-under-regions ${UNIT_COVERAGE_REGIONS} -- --test-threads=${TEST_THREADS} && \
+    cargo llvm-cov report --summary-only --output-path scripts/tmp/unit-coverage.txt"
+
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+report_lines = Path("scripts/tmp/unit-coverage.txt").read_text().splitlines()
+total = next((line for line in report_lines if line.startswith("TOTAL")), "")
+if not total:
+    raise SystemExit("coverage report missing TOTAL line")
+parts = total.split()
+if len(parts) < 13:
+    raise SystemExit(f"unexpected coverage line: {total}")
+
+branches_total = int(parts[10])
+branches_missed = int(parts[11])
+branches_cover = parts[12]
+min_branches = float(
+    os.environ.get("NSS_UNIT_COVERAGE_BRANCHES", os.environ.get("UNIT_COVERAGE_BRANCHES", "100"))
+)
+
+if branches_total == 0:
+    # llvm-cov prints "-" when there are no branch points; treat this as fully covered.
+    cover = 100.0
+else:
+    if not branches_cover.endswith("%"):
+        raise SystemExit(f"unexpected branch coverage value: {branches_cover}")
+    cover = float(branches_cover.strip("%"))
+
+if cover < min_branches:
+    print(Path("scripts/tmp/unit-coverage.txt").read_text())
+    print(f"Branch coverage {cover:.2f}% below {min_branches:.2f}%")
+    if branches_total > 0:
+        print(f"Missed branches: {branches_missed}/{branches_total}")
+    raise SystemExit(1)
+PY

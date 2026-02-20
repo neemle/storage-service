@@ -22,6 +22,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     TARGET="$(cat /tmp/rust-target)" && \
     cargo build --release --target "$TARGET" -p nss && \
     cp "/app/target/$TARGET/release/nss" /app/nss
+RUN mkdir -p /app/data-dir && chmod 0777 /app/data-dir
 
 FROM gcr.io/distroless/static-debian12
 ARG NSS_APP_VERSION=0.1.0
@@ -30,5 +31,8 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifi
 WORKDIR /app
 COPY --from=builder /app/nss /app/nss
 COPY --from=builder /app/internal/meta/migrations /app/migrations
+COPY --from=builder /app/data-dir /data
 EXPOSE 9010 9100
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["/app/nss", "-v"]
+USER 65532:65532
 ENTRYPOINT ["/app/nss"]

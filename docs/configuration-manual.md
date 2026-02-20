@@ -73,6 +73,17 @@ The repository includes `.env.dist` as the default local template. Copy it to `.
   - Postgres password used by Docker Compose when building `NSS_POSTGRES_DSN`.
 - `DB_BASE=nss`
   - Postgres database name used by Docker Compose when building `NSS_POSTGRES_DSN`.
+- Host port mapping variables (all optional, default values shown):
+  - `POSTGRES_HOST_PORT=15432`
+  - `MASTER_S3_PORT=9000`
+  - `MASTER_API_PORT=9001`
+  - `MASTER_INTERNAL_PORT=9003`
+  - `MASTER_METRICS_PORT=9100`
+  - `REPLICA1_S3_PORT=9004`, `REPLICA1_INTERNAL_PORT=9010`, `REPLICA1_METRICS_PORT=9101`
+  - `REPLICA2_S3_PORT=9005`, `REPLICA2_INTERNAL_PORT=9011`, `REPLICA2_METRICS_PORT=9102`
+  - `REPLICA3_S3_PORT=9006`, `REPLICA3_INTERNAL_PORT=9012`, `REPLICA3_METRICS_PORT=9103`
+  - `LOKI_PORT=3100`, `PROMTAIL_PORT=9080`, `PROMETHEUS_PORT=9090`, `THANOS_HTTP_PORT=10902`
+  - `GRAFANA_PORT=3000`, `REDIS_PORT=6379`, `RABBITMQ_PORT=5672`, `RABBITMQ_MGMT_PORT=15672`
 - `NSS_DATA_DIRS=/data`
   - Data directories mounted in containers for chunk/object storage.
 - `NSS_ADMIN_BOOTSTRAP_USER=admin`
@@ -302,16 +313,35 @@ If unset, Neemle Storage Service uses in-memory fallbacks and events are disable
 
 ### Runtime UI overrides
 
-The UI loads a runtime config script before bootstrapping.
-Replace this file to override the API base without rebuilding (only when using `NSS_UI_DIR`):
+The UI loads runtime settings from `settings.json` before Angular bootstraps.
+Replace this file to override environment-specific values without rebuilding (only when using `NSS_UI_DIR`):
 
-- `/ui/assets/runtime-config.js`
+- `/ui/settings.json`
 
 Example:
 
-```js
-window.__API_BASE__ = 'https://api.example.com';
+```json
+{
+  "apiBaseUrl": "https://api.example.com"
+}
 ```
 
-Legacy variables `window.__CONSOLE_API_BASE__` and `window.__ADMIN_API_BASE__` are still honored if
-`window.__API_BASE__` is not set.
+Legacy globals `window.__API_BASE__`, `window.__CONSOLE_API_BASE__`, and `window.__ADMIN_API_BASE__`
+remain as fallback compatibility only.
+
+## Device Matrix
+
+Playwright projects used in CI and local runs:
+
+- `base-desktop-chromium`
+- `base-tablet-portrait`
+- `base-tablet-landscape`
+- `base-mobile-iphone`
+- `base-mobile-pixel`
+- `base-mobile-samsung`
+- `ui-desktop-chromium`
+- `ui-tablet-portrait`
+- `ui-tablet-landscape`
+- `ui-mobile-iphone`
+- `ui-mobile-pixel`
+- `ui-mobile-samsung`

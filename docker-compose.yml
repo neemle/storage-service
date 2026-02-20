@@ -11,9 +11,9 @@ services:
       timeout: 5s
       retries: 10
     ports:
-      - "15432:5432"
+      - "${POSTGRES_HOST_PORT:-15432}:5432"
     volumes:
-      - ./.local-data/pg:/var/lib/postgresql
+      - ./.dev-data/pg:/var/lib/postgresql
 
   master:
     build:
@@ -31,12 +31,12 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "9000:9000"
-      - "9001:9001"
-      - "9003:9003"
-      - "9100:9100"
+      - "${MASTER_S3_PORT:-9000}:9000"
+      - "${MASTER_API_PORT:-9001}:9001"
+      - "${MASTER_INTERNAL_PORT:-9003}:9003"
+      - "${MASTER_METRICS_PORT:-9100}:9100"
     volumes:
-      - ./.local-data/master:/data
+      - ./.dev-data/master:/data
 
   join-token-seed:
     image: postgres:18-alpine
@@ -79,11 +79,11 @@ services:
       master:
         condition: service_started
     ports:
-      - "9004:9000"
-      - "9010:9010"
-      - "9101:9100"
+      - "${REPLICA1_S3_PORT:-9004}:9000"
+      - "${REPLICA1_INTERNAL_PORT:-9010}:9010"
+      - "${REPLICA1_METRICS_PORT:-9101}:9100"
     volumes:
-      - ./.local-data/replicas/replica-1:/data
+      - ./.dev-data/replicas/replica-1:/data
 
   replica2:
     build:
@@ -105,11 +105,11 @@ services:
       master:
         condition: service_started
     ports:
-      - "9005:9000"
-      - "9011:9010"
-      - "9102:9100"
+      - "${REPLICA2_S3_PORT:-9005}:9000"
+      - "${REPLICA2_INTERNAL_PORT:-9011}:9010"
+      - "${REPLICA2_METRICS_PORT:-9102}:9100"
     volumes:
-      - ./.local-data/replicas/replica-2:/data
+      - ./.dev-data/replicas/replica-2:/data
 
   replica3:
     build:
@@ -131,11 +131,11 @@ services:
       master:
         condition: service_started
     ports:
-      - "9006:9000"
-      - "9012:9010"
-      - "9103:9100"
+      - "${REPLICA3_S3_PORT:-9006}:9000"
+      - "${REPLICA3_INTERNAL_PORT:-9012}:9010"
+      - "${REPLICA3_METRICS_PORT:-9103}:9100"
     volumes:
-      - ./.local-data/replicas/replica-3:/data
+      - ./.dev-data/replicas/replica-3:/data
 
   observability-bootstrap:
     image: python:3.12-alpine
@@ -150,7 +150,7 @@ services:
       master:
         condition: service_started
     volumes:
-      - ./.local-data/observability:/obs
+      - ./.dev-data/observability:/obs
       - ./deploy/observability/bootstrap_obs.py:/opt/nss/deploy/observability/bootstrap_obs.py:ro
     command:
       - sh
@@ -165,10 +165,10 @@ services:
       observability-bootstrap:
         condition: service_completed_successfully
     ports:
-      - "3100:3100"
+      - "${LOKI_PORT:-3100}:3100"
     volumes:
-      - ./.local-data/observability:/obs
-      - ./.local-data/observability/loki:/loki
+      - ./.dev-data/observability:/obs
+      - ./.dev-data/observability/loki:/loki
     command:
       - -config.file=/obs/loki-config.yml
 
@@ -178,7 +178,7 @@ services:
       loki:
         condition: service_started
     ports:
-      - "9080:9080"
+      - "${PROMTAIL_PORT:-9080}:9080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./deploy/observability/promtail.yml:/etc/promtail/config.yml:ro
@@ -197,10 +197,10 @@ services:
       replica3:
         condition: service_started
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./.local-data/observability/prometheus:/prometheus
+      - ./.dev-data/observability/prometheus:/prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -217,10 +217,10 @@ services:
       prometheus:
         condition: service_started
     ports:
-      - "10902:10902"
+      - "${THANOS_HTTP_PORT:-10902}:10902"
     volumes:
-      - ./.local-data/observability:/obs
-      - ./.local-data/observability/prometheus:/prometheus
+      - ./.dev-data/observability:/obs
+      - ./.dev-data/observability/prometheus:/prometheus
     command:
       - sidecar
       - --http-address=0.0.0.0:10902
@@ -241,9 +241,9 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     volumes:
-      - ./.local-data/observability/grafana:/var/lib/grafana
+      - ./.dev-data/observability/grafana:/var/lib/grafana
       - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
@@ -266,7 +266,7 @@ services:
       replica3:
         condition: service_started
     volumes:
-      - ./.local-data/observability:/obs
+      - ./.dev-data/observability:/obs
       - ./deploy/observability/demo_load.py:/opt/nss/deploy/observability/demo_load.py:ro
     command:
       - sh
@@ -280,12 +280,12 @@ services:
     profiles:
       - redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
 
   rabbitmq:
     image: rabbitmq:4-management-alpine
     profiles:
       - rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"

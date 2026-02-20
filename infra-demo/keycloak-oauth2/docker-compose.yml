@@ -21,7 +21,7 @@ services:
       - "8080:8080"
     volumes:
       - ../keycloak-common/realm-nss.json:/opt/keycloak/data/import/realm-nss.json:ro
-      - ../../.local-data/keycloak-oauth2:/opt/keycloak/data
+      - ../../.dev-data/keycloak-oauth2:/opt/keycloak/data
 
   master:
     extends:

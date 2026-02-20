@@ -159,6 +159,16 @@ async function createAndEditBackupPolicy(
   sourceBucket: string,
   backupBucket: string
 ): Promise<Locator> {
+  const { policyName, policyRow } = await createBackupPolicy(page, card, sourceBucket, backupBucket);
+  return editBackupPolicy(page, card, policyRow, policyName);
+}
+
+async function createBackupPolicy(
+  page: Page,
+  card: Locator,
+  sourceBucket: string,
+  backupBucket: string
+): Promise<{ policyName: string; policyRow: Locator }> {
   await openStorageTab(page, 'Backups');
   const policyName = `policy-${uniqueSuffix()}`;
   await typeSlow(card.getByLabel('Policy name'), policyName);
@@ -172,7 +182,10 @@ async function createAndEditBackupPolicy(
   expect((await createPromise).ok()).toBeTruthy();
   const policyRow = card.getByTestId('backup-policy-row').filter({ hasText: policyName });
   await expect(policyRow).toBeVisible({ timeout: 20000 });
+  return { policyName, policyRow };
+}
 
+async function editBackupPolicy(page: Page, card: Locator, policyRow: Locator, policyName: string): Promise<Locator> {
   await activateButton(policyRow.getByRole('button', { name: 'Edit policy' }));
   const wizard = page.locator('.backup-wizard-modal');
   await expect(wizard).toBeVisible({ timeout: 10000 });

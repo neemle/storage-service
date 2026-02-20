@@ -1,5 +1,7 @@
 # docs/rules.md — Tight Rules (Spec + Speck Driven Development)
 
+**Version: 0.1.0**
+
 These rules are **STRICT / NON‑NEGOTIABLE** for all AI agents and contributors in this repo.
 
 If any instruction conflicts:
@@ -387,6 +389,7 @@ Playwright MUST implement the matrix as **projects** (no manual resizing/clickin
 ### 7.4 UI test mapping + baselines (hard)
 
 - Every UI test MUST map to at least one use case `UC-###`
+- **Every `UC-###` MUST be covered by at least one Playwright UI test with recorded video** — no UC without a video artifact
 - Test titles MUST include UC id(s), e.g. `test('[UC-012] ...', ...)`
 - Every UI test MUST:
     - do real interactions (click/type/submit/scroll)
@@ -401,6 +404,34 @@ Playwright MUST implement the matrix as **projects** (no manual resizing/clickin
         - client-side privilege escalation (hidden admin UI elements accessible via DOM manipulation)
         - **memory leaks** in the browser (detached DOM nodes, unsubscribed observables/listeners, growing heap on repeated navigation)
 
+**Human-like interaction speed (hard):**
+
+Tests MUST simulate realistic human interaction timing — NOT instant machine-speed actions:
+
+- **Typing:** 2–3 characters per second (300–500ms delay between keystrokes). Use Playwright's `type()` with `delay` option, NOT `fill()`
+- **Post-navigation wait:** wait **at least 1 second** after each page load / route change before interacting (simulates user reading/orienting)
+- **Click pause:** wait **300–500ms** before and after each click action
+- **Form field transitions:** wait **200–400ms** between moving to the next field (simulates tabbing / mouse move)
+- **Post-submit wait:** wait **1–2 seconds** after form submission before asserting results (simulates user watching for feedback)
+- **Scroll pause:** wait **500ms–1s** after scrolling before interacting with newly visible content
+
+These delays MUST be implemented via a shared test utility (e.g., `humanType()`, `humanClick()`, `waitForHuman()`) — NOT ad-hoc `sleep()` calls scattered through tests.
+
+**Mouse cursor visibility in videos (hard):**
+
+- Test videos MUST show where mouse clicks occur — the viewer MUST be able to follow the cursor
+- Use Playwright's built-in cursor visualization or inject a custom cursor overlay (CSS/JS) that:
+    - shows the cursor position at all times
+    - highlights click events visually (e.g., ripple, dot, or flash on click)
+- If Playwright does not natively render cursor in video: inject a helper script into the page under test that tracks `mousemove`/`click` and renders a visible indicator
+
+**Video resolution (hard):**
+
+- Minimum video resolution: **1920×1080 (Full HD)** — preferred
+- Acceptable fallback: **1280×720 (HD)** — only if Full HD causes stability/performance issues (must justify in Speck)
+- Playwright `video.size` MUST be explicitly configured — do NOT rely on defaults
+- For mobile/tablet projects: video resolution MUST match the device viewport (but never below 720p height)
+
 Baseline comparison rule:
 
 - For each `UC-###` test step, the test MUST compare screenshot to:
@@ -412,8 +443,10 @@ Playwright runs MUST produce:
 
 - HTML report (always)
 - screenshots for major stages (always)
-- video per test (always)
+- video per test (always, **Full HD 1920×1080** preferred, minimum HD 1280×720)
 - on failure: screenshots + video (mandatory) and traces strongly recommended
+
+Videos MUST show cursor position and click events (see §7.4).
 
 Artifacts must be written to predictable directories:
 
@@ -427,7 +460,8 @@ There MUST be one final UI test that serves as a customer demo covering ALL use 
 - runs last within the UI suite
 - includes all relevant UC IDs in the title, e.g. `[DEMO][UC-001][UC-002] ...`
 - runs across the full device matrix
-- produces the same artifacts (screenshots + video)
+- uses human-like interaction speed (§7.4) — this video is the primary demo artifact
+- produces the same artifacts (screenshots + video at Full HD resolution with visible cursor)
 
 ---
 
@@ -631,8 +665,9 @@ Testing:
 - Integration coverage 100% (API + UI where applicable)
 - Curl tests: 100% route coverage + positive/negative outcomes + security/adversarial cases (if API exists)
 - UI tests: all UCs + edge cases + negative paths + security tests + device matrix + demo test
+- Every UC covered by at least one Playwright test with recorded video (Full HD, visible cursor, human-like speed)
 - Security/adversarial tests present at every applicable stage (labeled `[SEC]`)
-- Playwright configured for HTML report + screenshots + videos (always)
+- Playwright configured for HTML report + screenshots + videos (Full HD, cursor visible)
 
 ---
 
@@ -657,6 +692,8 @@ flowchart TD
 - `docs/ui-baselines/UC-###/<project-name>/01-start.png`
 - `docs/ui-baselines/UC-###/<project-name>/02-filled.png`
 - `docs/ui-baselines/UC-###/<project-name>/03-success.png`
+
+**Playwright video:** mandatory — at least one UI test with recorded video MUST cover this UC.
 
 **Failure modes (user-visible):**
 

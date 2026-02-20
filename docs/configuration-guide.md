@@ -302,15 +302,17 @@ If unset, Neemle Storage Service uses in-memory fallbacks and events are disable
 
 ### Runtime UI overrides
 
-The UI loads a runtime config script before bootstrapping.
+The UI loads runtime settings from `settings.json` before bootstrapping.
 Replace this file to override the API base without rebuilding (only when using `NSS_UI_DIR`):
 
-- `/ui/assets/runtime-config.js`
+- `/ui/settings.json`
 
 Example:
 
-```js
-window.__API_BASE__ = 'https://api.example.com';
+```json
+{
+  "apiBaseUrl": "https://api.example.com"
+}
 ```
 
 Legacy variables `window.__CONSOLE_API_BASE__` and `window.__ADMIN_API_BASE__` are still honored if

@@ -1,404 +1,308 @@
-# Neemle Storage Service Functional Specification
+# Neemle Storage Service Specification
 
-This document is the business and behavior source of truth for this repository.
-When implementation and docs differ, this document wins.
+This document is the business source of truth for behavior and acceptance.
 
-## Product Identity
+## 1) What The System Does
 
-- Product name: **Neemle Storage Service**
-- Short description: self-hosted, single-site, S3-compatible object storage
-- Primary surfaces:
-  - S3 API for application data access
-  - Unified Console/Admin API + web UI for operations
-  - Internal replication API for cluster membership and chunk movement
+Neemle Storage Service is a self-hosted, single-site, S3-compatible object storage platform with:
+- S3-compatible data plane
+- Unified admin/console API + web UI
+- Master/replica cluster controls
+- Snapshot/backup operations
+- Optional observability demo topology
 
-## Why It Works
+## 2) Business Value
 
-- Object data is written to local chunk storage (`NSS_DATA_DIRS`) and described by metadata rows in Postgres.
-- Multiple `NSS_DATA_DIRS` values let operators spread chunk I/O across disks, reducing contention and
-  improving recovery options when a single disk path degrades.
-- The service can present S3-compatible behavior because object, bucket, multipart, and auth flows map to
-  explicit handlers backed by metadata and chunk operations.
-- Admin and console workflows are stable because user/session/access-key state is persisted and validated
-  before each privileged action.
-- Authentication mode is explicit:
-  - `internal`: local username/password credentials are validated by Neemle Storage Service.
-  - `oidc`: browser login is delegated to an OpenID Connect provider (for example Keycloak), and NSS
-    issues local session tokens only after validating provider ID tokens.
-  - `oauth2`: browser login uses the same authorization-code redirect/callback pipeline as OIDC, with
-    provider metadata/token validation configured through OIDC-compatible env values.
-  - `saml2`: browser login is federated through an external identity provider bridge that exposes an
-    OIDC-compatible authorization-code surface to NSS.
-- Replica join and heartbeat paths let the master reason about node availability and replication state.
-- Replication factor and write quorum settings allow balancing durability and write availability for
-  single-site clusters with one or more replicas.
-- Master-issued access keys and presigned URLs are validated against shared metadata so replicas can
-  serve read traffic out of the box for distributed content delivery.
-- Snapshot policies can automatically capture immutable bucket point-in-time records on
-  `hourly`, `daily`, `weekly`, `monthly`, and `on_create_change` triggers.
-- On-demand snapshots can be created manually for any bucket and used to create a new bucket from
-  the recorded object state.
-- Backup policies can run `full`, `incremental`, or `differential` executions on
-  `hourly`, `daily`, `weekly`, `monthly`, and `on_demand` triggers.
-- Backup policies support strategy declarations `3-2-1`, `3-2-1-1-0`, and `4-3-2`, plus external
-  target descriptors for S3/Glacier/SFTP/other services.
-- External backup targets are validated on policy create/update and can be connection-tested through
-  admin APIs and the console UI before policy execution.
-- Backup archives are exportable as `tar` or `tar.gz` and can be generated on-demand with maximum
-  gzip compression for `tar.gz`.
-- Chunk payload files in `NSS_DATA_DIRS` are encrypted at rest using an authenticated envelope that
-  carries a key id, so active encryption keys can rotate without breaking reads of older chunks.
-- Migration mode can temporarily allow plaintext legacy chunk reads while new and rewritten chunks
-  are persisted encrypted.
-- Observability demo topology runs one master and three replicas (delivery, backup, volume),
-  with Prometheus/Loki/Grafana attached.
-- Loki writes logs to a dedicated bucket in Neemle Storage Service.
-- Thanos sidecar uploads Prometheus TSDB blocks to a dedicated Neemle Storage Service bucket.
-- Node runtime model is explicit:
-  - `master`: control-plane node for writes, policy management, scheduling, and cluster coordination.
-  - `slave-delivery`: read-delivery node for authenticated and presigned S3 read traffic.
-  - `slave-backup`: backup-only node that never serves client S3 content.
-  - `slave-volume`: storage-capacity node focused on replicated chunk durability and recovery workflows.
-- Slave runtime mode and slave backup policy assignment are configured remotely from master admin APIs.
+- Provide a MinIO-class private storage platform without cloud lock-in.
+- Keep control-plane operations in one UI/API surface.
+- Preserve durability with replication, checksums, and repair workflows.
+- Keep deployment deterministic via Docker-first local/CI flows.
 
-## Business Rules And Invariants
+## 3) High-Level Architecture
 
-- Scope is single-site only. Multi-region behavior is out of scope.
-- `NSS_SECRET_ENCRYPTION_KEY_BASE64` must decode to 32 bytes.
-- `NSS_AUTH_MODE` controls login mode and must be `internal`, `oidc`, `oauth2`, or `saml2`.
-- When `NSS_AUTH_MODE` is `oidc`, `oauth2`, or `saml2`, OIDC-compatible issuer/client/redirect settings
-  must be configured and valid.
-- JWT signing must use key material separated from secret-at-rest encryption keys.
-- Access keys are encrypted at rest.
-- Chunk payloads are encrypted at rest by default when data is written to local storage paths.
-- Encrypted chunk envelopes must include a key id resolvable from configured chunk encryption keys.
-- When plaintext legacy read compatibility is disabled, plaintext chunk payloads are rejected.
-- S3 API authentication uses SigV4.
-- Public bucket reads can bypass private presign requirements; private buckets require auth or presigned URLs.
-- Bootstrap admin credentials must exist at startup.
-- If `NSS_ADMIN_BOOTSTRAP_FORCE_PASSWORD=true`, master startup re-syncs bootstrap admin password
-  to the configured env value.
-- In non-dev mode (`NSS_INSECURE_DEV=false`), `NSS_ADMIN_BOOTSTRAP_PASSWORD` and
-  `NSS_INTERNAL_SHARED_TOKEN` must not use insecure default values.
-- Slaves must present a valid join token to join a cluster.
-- External object writes are handled by master data-plane endpoints.
-- `slave-delivery` data-plane endpoints are read-only for client traffic.
-- `slave-backup` and `slave-volume` reject client S3 traffic.
-- WORM buckets enforce write-once semantics for user traffic: first object creation is allowed,
-  while overwrite/delete and other mutating requests are rejected.
-- Console/API CORS with credentials requires explicit allowed origins; wildcard origin is only allowed in dev mode.
-- If Redis or RabbitMQ are not configured, core storage still works with in-memory/event-disabled fallbacks.
-- Console UI is structured into dedicated pages/components so authentication, settings, and operational views
-  can evolve independently without changing business behavior.
-- Console Admin storage section provides inline operator help hints for WORM, snapshot, backup strategy,
-  and node mode decisions.
-- Console Admin storage section is split into operator-safe parts:
-  - Nodes
-  - Buckets
-  - Snapshots
-  - Backups
-- Embedded UI static assets include precompressed `.gz` variants generated at build time using maximum gzip
-  compression and are served with `Content-Encoding: gzip` when the client advertises gzip support.
-- Dev demo `docker compose up --build` starts one master plus three connected replicas
-  (`slave-delivery`, `slave-backup`, `slave-volume`) and includes Prometheus, Loki, and Grafana
-  with preprovisioned dashboards.
-- Observability object storage uses separate buckets for logs and metrics blocks.
+- Master node: write/data-plane control and admin APIs.
+- Replica nodes: read-delivery and storage roles by mode.
+- Postgres: metadata source of truth.
+- Redis/RabbitMQ: optional acceleration/events.
+- Web UI: embedded static app served by backend.
 
-## Use Cases
+## 4) Business Rules (BR-###)
+
+- `BR-001`: Deployment scope is single-site only.
+- `BR-002`: `NSS_SECRET_ENCRYPTION_KEY_BASE64` must decode to 32 bytes.
+- `BR-003`: `NSS_AUTH_MODE` must be one of `internal|oidc|oauth2|saml2`.
+- `BR-004`: SigV4 is mandatory for S3 auth flows.
+- `BR-005`: Bootstrap admin credentials must exist and be valid at startup.
+- `BR-006`: In non-dev mode, insecure defaults are rejected.
+- `BR-007`: Replicas must present valid join tokens.
+- `BR-008`: Master is the write endpoint for client data-plane writes.
+- `BR-009`: `slave-delivery` can serve reads; `slave-backup` and `slave-volume` cannot.
+- `BR-010`: WORM buckets allow first write and block overwrite/delete user mutations.
+- `BR-011`: Access keys are encrypted at rest.
+- `BR-012`: Chunk payloads are encrypted at rest when encryption is enabled.
+- `BR-013`: Chunk envelopes must carry resolvable key IDs.
+- `BR-014`: Public-read behavior must match bucket policy; private reads require auth/presign.
+- `BR-015`: CORS with credentials requires explicit allowed origins in non-dev mode.
+
+## 5) Workflows (WF-###)
+
+- `WF-001`: Internal username/password login and session lifecycle.
+- `WF-002`: Federated auth code redirect/callback login.
+- `WF-003`: Access key create/read/disable/delete lifecycle.
+- `WF-004`: Bucket/object create/update/list/delete lifecycle.
+- `WF-005`: Replica token join, heartbeat, and read-delivery eligibility.
+- `WF-006`: Snapshot create/list/restore lifecycle.
+- `WF-007`: Backup policy schedule/run/export lifecycle.
+- `WF-008`: CI fail-fast stage execution `1→7` with artifact collection.
+
+## 6) Use Cases
+
+### Access & Identity
 
 ### UC-001: Admin bootstrap and sign-in
-
-Happy path:
-1. Operator starts master with bootstrap admin credentials.
-2. Admin signs in from the unified UI:
-   - by username/password when `NSS_AUTH_MODE=internal`, or
-   - via provider redirect/callback when `NSS_AUTH_MODE` is `oidc`, `oauth2`, or `saml2`.
-3. Admin can access cluster and user management views.
-
+Summary: Bootstrap admin can authenticate and access admin controls.
+Description: Supports internal and external auth modes with session establishment.
+References: `BR-003`, `BR-005`, `BR-006`, `WF-001`, `WF-002`.
+```mermaid
+flowchart LR
+  A[Start NSS] --> B[Bootstrap admin exists]
+  B --> C[Login request]
+  C --> D{Auth mode}
+  D -->|internal| E[Validate password]
+  D -->|external| F[OIDC/OAuth2/SAML callback]
+  E --> G[Issue session]
+  F --> G
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-001/base-desktop-chromium/01-start.png`
 Failure modes:
-- Invalid credentials return auth failure.
-- OIDC state/nonce or token validation failures return auth failure.
-- OAuth2/SAML2 broker redirect/token failures return auth failure.
-- Missing/invalid session token blocks admin routes.
-
-Acceptance:
-- Admin login returns a token and UI session state.
-- Unauthorized access is rejected.
-- Login behavior follows configured auth mode and does not silently fall back to another mode.
+- Invalid credentials or invalid callback state/nonce are rejected.
+- Missing/invalid token blocks admin routes.
 
 ### UC-002: Console key lifecycle
-
-Happy path:
-1. Signed-in console user creates an access key.
-2. Service returns key id and secret once.
-3. User can disable and delete keys.
-
+Summary: Users manage access keys in console.
+Description: Key secret is shown once; keys can be disabled and deleted.
+References: `BR-011`, `WF-003`.
+```mermaid
+flowchart LR
+  A[Signed in user] --> B[Create access key]
+  B --> C[Show secret once]
+  C --> D[Disable or delete key]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-002/base-desktop-chromium/01-start.png`
 Failure modes:
-- Invalid session token returns unauthorized.
-- Duplicate/invalid operations return validation or conflict errors.
-- Attempting to update/delete another user's access key returns forbidden.
+- Invalid session or cross-user operations are rejected.
 
-Acceptance:
-- Created keys can be listed and managed by their owner according to policy.
+### UC-015: Federated login (OIDC/OAuth2/SAML2 bridge)
+Summary: External identity provider login works end-to-end.
+Description: Authorization code callback is validated before local session issuance.
+References: `BR-003`, `BR-005`, `WF-002`.
+```mermaid
+flowchart LR
+  A[User clicks external login] --> B[Provider auth page]
+  B --> C[Callback with code]
+  C --> D[Validate token + claims]
+  D --> E[Create local session]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-015/base-desktop-chromium/01-start.png`
+Failure modes:
+- Missing provider configuration blocks startup/auth flow.
+- Invalid state/code/token is rejected.
+
+### Storage & Data Plane
 
 ### UC-003: Bucket and object lifecycle
-
-Happy path:
-1. User creates a bucket.
-2. User uploads, lists, downloads, renames, and deletes objects.
-3. User updates object metadata.
-
+Summary: Users manage buckets and object operations.
+Description: Includes create/list/upload/download/rename/delete and metadata edits.
+References: `BR-004`, `BR-010`, `BR-014`, `WF-004`.
+```mermaid
+flowchart LR
+  A[Create bucket] --> B[Upload object]
+  B --> C[List and inspect]
+  C --> D[Update metadata or rename]
+  D --> E[Delete object]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-003/base-desktop-chromium/01-start.png`
 Failure modes:
-- Missing bucket/object returns not found.
-- Invalid names/requests return validation errors.
-- Auth failures return unauthorized/forbidden.
-
-Acceptance:
-- Metadata and object state remain consistent after each operation.
-- Console bucket listing includes `boundNodeIds` and `maxAvailableBytes` derived from writable bound volumes.
-- When no explicit binding exists, free-space calculations use default writable volume set.
-- Bucket-volume bindings reject unknown nodes and nodes not eligible for volume binding.
+- Invalid bucket/object names are rejected.
+- Missing resources return not-found.
 
 ### UC-004: Replica join and replication
-
-Happy path:
-1. Admin creates join token.
-2. Replica starts with token and joins master.
-3. Cluster reports replica online and records chunk replicas.
-4. Replica serves object reads using master-issued access keys and presigned URLs.
-
+Summary: Replica joins master and participates in replication.
+Description: Admin generates token; replica joins and serves eligible read traffic.
+References: `BR-007`, `BR-008`, `BR-009`, `WF-005`.
+```mermaid
+flowchart LR
+  A[Generate join token] --> B[Replica boots]
+  B --> C[Join master]
+  C --> D[Heartbeat + online]
+  D --> E[Read delivery eligibility]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-004/base-desktop-chromium/01-start.png`
 Failure modes:
-- Invalid/expired token blocks join.
-- Offline replica does not receive new writes until healthy.
-- Client write attempts to replica data-plane endpoints are rejected.
-
-Acceptance:
-- Joined replica appears in node inventory and participates in replication paths.
-- Joined replica can serve authenticated and presigned read traffic for distributed content delivery.
+- Invalid/expired join token blocks join.
+- Client writes to replica data-plane endpoints are rejected.
 
 ### UC-005: Public and presigned URL access
-
-Happy path:
-1. Public bucket object can be fetched from its public URL.
-2. Private bucket object can be fetched via valid presigned URL.
-3. Access keys created on master authenticate valid read access on replica data-plane endpoints.
-4. Presigned URLs generated by master are accepted by replica data-plane endpoints for read access.
-
+Summary: Public objects and presigned private reads work as designed.
+Description: URL behavior aligns with bucket visibility and signature validity.
+References: `BR-004`, `BR-014`, `WF-004`.
+```mermaid
+flowchart LR
+  A[Request object URL] --> B{Bucket visibility}
+  B -->|public| C[Serve read]
+  B -->|private| D[Require auth or presign]
+  D --> E[Validate signature]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-005/base-desktop-chromium/01-start.png`
 Failure modes:
-- Expired/invalid signatures are rejected.
+- Expired/invalid signature is rejected.
 - Private object without auth/presign is rejected.
 
-Acceptance:
-- URL behavior matches bucket visibility and signature validity.
-- Replica-delivered reads follow the same auth and signature rules as master-delivered reads.
+### UC-014: Chunk encryption at rest and key rotation
+Summary: New chunk writes are encrypted and remain readable after key rotation.
+Description: Active key rotates while old keys stay available for decryption.
+References: `BR-012`, `BR-013`, `WF-004`.
+```mermaid
+flowchart LR
+  A[Write chunk] --> B[Encrypt with active key id]
+  B --> C[Persist envelope]
+  C --> D[Read + resolve key id]
+  D --> E[Decrypt payload]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-014/base-desktop-chromium/01-start.png`
+Failure modes:
+- Unknown key ID rejects read.
+- Missing active key blocks startup/runtime init.
+
+### Operations & Governance
 
 ### UC-006: CI/CD delivery contract
-
-Happy path:
-1. Every push/PR runs the full fail-fast test pipeline in order.
-2. Every push/PR runs Rust dependency advisory audit using repository policy (`audit.toml`).
-3. Tag push additionally produces release binaries and publishes release artifacts.
-
+Summary: CI runs fail-fast stages in required order.
+Description: Stage gating stops on first failure; tag builds publish release artifacts.
+References: `WF-008`.
+```mermaid
+flowchart LR
+  A[Push/PR] --> B[Stage 1]
+  B --> C[Stage 2]
+  C --> D[...]
+  D --> E[Stage 7]
+  E --> F[Tag release artifacts]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-006/base-desktop-chromium/01-start.png`
 Failure modes:
-- Any failing stage stops downstream stages.
-- Release artifacts are not published when prior stages fail.
-
-Acceptance:
-- CI executes stages in this order: unit, integration, curl, base UI, UI, runtime, production.
-  Unit stage includes backend unit and frontend unit tests.
-  Integration stage includes backend integration and frontend integration tests.
-- CI blocks build/test stages when security audit fails (except explicitly ignored advisories in policy).
-- All test suites run in Docker containers.
-- Frontend Playwright runs always produce HTML report plus screenshot/video artifacts under
-  `test-results/*`.
-- UI/production Playwright runners must verify that each requested project executes and that videos exist
-  for all executed tests.
-- Tag builds publish cross-platform binaries as release assets.
-
-Operational tooling acceptance:
-- `scripts/run-tests.sh` supports fail-fast full pipeline (`all`) and targeted stage keys
-  (for example `api-unit`, `api-integration`, `api-curl`, `enc`).
-- `scripts/memory-leak-check.sh` runs Dockerized leak checks and emits summary/logs in
-  `test-results/memcheck/*`.
-- Memcheck quality gate fails on non-zero `definitely_lost_bytes` or `indirectly_lost_bytes`.
-  `possibly_lost_bytes` is recorded as warning because runtime internals can produce false positives.
-- `scripts/build-production-image.sh <image> <tag>` builds two tags (`<tag>` and `latest`) and
-  sets app build version via build arg.
+- Any failed stage blocks downstream stages.
 
 ### UC-007: Console UI delivery and rendering contract
-
-Happy path:
-1. Operator opens the console UI from the embedded backend static bundle.
-2. Browser requests assets with `Accept-Encoding: gzip`.
-3. Service responds with precompressed UI assets and correct content type/encoding headers.
-4. User navigates login, settings, and operations views rendered by dedicated UI components.
-
+Summary: UI bundle renders correctly from embedded assets.
+Description: SPA routing fallback and compressed static assets remain functional.
+References: `BR-015`.
+```mermaid
+flowchart LR
+  A[Open UI] --> B[Load assets]
+  B --> C[Render login]
+  C --> D[Render operational views]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-007/base-desktop-chromium/01-start.png`
 Failure modes:
-- If a compressed variant is unavailable, the uncompressed asset is served.
-- Missing static assets return not found.
-
-Acceptance:
-- Build outputs for embedded UI contain both original assets and `.gz` variants.
-- UI routing fallback (`index.html`) remains functional for client-side routes.
-- Admin storage protection view shows inline operator hints for backup strategies (`3-2-1`, `3-2-1-1-0`,
-  `4-3-2`) and related WORM/snapshot/replica operations.
-- Visual/behavioral output remains equivalent to existing console business use cases (UC-001..UC-005).
+- Missing static assets return not-found.
 
 ### UC-008: Admin audit pagination
-
-Happy path:
-1. Admin opens audit view.
-2. UI requests audit entries with offset/limit.
-3. UI paginates forward/backward using server-side slices.
-
+Summary: Audit log pagination is server-driven.
+Description: Offset/limit navigation supports next/previous pages.
+References: `WF-001`.
+```mermaid
+flowchart LR
+  A[Open audit view] --> B[Request offset+limit]
+  B --> C[Render page slice]
+  C --> D[Next/previous navigation]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-008/base-desktop-chromium/01-start.png`
 Failure modes:
-- Unauthorized request is rejected.
-- Invalid pagination params are rejected.
-
-Acceptance:
-- Audit endpoint honors `offset` and `limit` query params.
-- UI pagination controls correctly reflect available next/previous pages.
+- Invalid paging parameters are rejected.
 
 ### UC-009: Bucket snapshot lifecycle and restore
-
-Happy path:
-1. Admin configures snapshot policy for a bucket (scheduled or `on_create_change`) or requests an on-demand snapshot.
-2. Service stores immutable snapshot entries for current object versions in that bucket.
-3. Admin restores a new bucket from a snapshot.
-
+Summary: Snapshot policies and on-demand restore are available.
+Description: Immutable snapshot entries can restore into a new bucket.
+References: `WF-006`.
+```mermaid
+flowchart LR
+  A[Configure snapshot policy] --> B[Capture snapshot]
+  B --> C[List snapshots]
+  C --> D[Restore to new bucket]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-009/base-desktop-chromium/01-start.png`
 Failure modes:
-- Missing bucket/snapshot returns not found.
-- Invalid trigger value or invalid restore request returns validation error.
-- Unauthorized request is rejected.
-
-Acceptance:
-- Snapshot records include trigger kind, timestamp, object count, and total size.
-- Restore creates a new bucket with object metadata/content matching snapshot entries.
-- Admin UI lists snapshot policies for the selected bucket and can load/edit policy values.
+- Missing bucket/snapshot returns not-found.
 
 ### UC-010: Backup policy execution and retention
-
-Happy path:
-1. Admin creates backup policy with type (`full|incremental|differential`), schedule, strategy, retention,
-   and backup bucket target.
-2. Scheduler (or on-demand execution) runs the policy.
-3. Service writes archive objects to backup bucket and records backup run metadata.
-4. Retention policy prunes oldest run metadata beyond configured keep count.
-
+Summary: Backup policies execute and retain runs by policy.
+Description: Scheduler and on-demand runs produce archives and retained metadata.
+References: `WF-007`.
+```mermaid
+flowchart LR
+  A[Create backup policy] --> B[Run backup]
+  B --> C[Store archive + run metadata]
+  C --> D[Apply retention]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-010/base-desktop-chromium/01-start.png`
 Failure modes:
-- Backup policy referencing non-WORM backup bucket is rejected.
-- Invalid schedule/type/strategy is rejected.
-- Invalid external target descriptors or unreachable target endpoints are rejected by the
-  connection-test workflow.
-- Backup run failures are recorded with error status.
-
-Acceptance:
-- Backup runs are queryable with status, trigger, archive path, and size.
-- Backup retention configuration is enforced after successful runs.
-- Backup scope accepts `master` and `slave` (`replica` alias accepted); persisted scope remains canonical
-  (`master` or `replica`).
-- Slave-scoped backup policies are accepted only for nodes configured as `slave-backup`.
-- Admin UI can create and update backup policies without direct API calls.
-- Admin UI exposes a step-based backup wizard that validates required fields before submit.
-- Admin API and UI provide remote target connection testing for configured backup destinations.
-- Admin UI `Show example` loads valid external target JSON including both `s3` and `sftp` target templates.
+- Invalid schedule/strategy/target is rejected.
 
 ### UC-011: Slave node mode control
-
-Happy path:
-1. Admin sets slave runtime mode remotely from master.
-2. Slave syncs runtime mode.
-3. In `slave-delivery` mode, node serves authenticated/presigned reads.
-4. In `slave-backup` mode, node rejects client S3 traffic and can execute slave-scoped backup policies.
-5. In `slave-volume` mode, node rejects client S3 traffic and remains focused on storage durability tasks.
-
+Summary: Admin remotely controls replica sub-mode.
+Description: Delivery/backup/volume modes enforce allowed behavior.
+References: `BR-009`, `WF-005`.
+```mermaid
+flowchart LR
+  A[Admin sets sub-mode] --> B[Replica syncs mode]
+  B --> C{Mode}
+  C -->|delivery| D[Serve reads]
+  C -->|backup/volume| E[Block client S3 serving]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-011/base-desktop-chromium/01-start.png`
 Failure modes:
-- Unauthorized runtime mode update is rejected.
-- Unknown runtime mode value is rejected.
-
-Acceptance:
-- Runtime mode changes are persisted and applied without changing business identity or auth rules.
-- Non-delivery modes block client content serving on slave data-plane endpoints.
-- Slave backup scheduling is active only while local sub-mode is `backup`.
-- Admin can switch slave sub-mode on demand between `delivery`, `backup`, and `volume`.
-- Runtime mode update rejects unknown node IDs and non-slave nodes.
-
-### UC-012: Federated login (OIDC/OAuth2/SAML2 bridge)
-
-Happy path:
-1. Operator sets `NSS_AUTH_MODE` to `oidc`, `oauth2`, or `saml2` and configures OIDC-compatible env values.
-2. User starts login from UI and is redirected to provider authorization endpoint.
-3. Provider returns authorization code to NSS callback.
-4. NSS exchanges code for tokens, validates ID token (issuer, audience, signature, nonce), and creates a local
-   session token.
-5. User is redirected back to UI as signed-in user.
-
-Failure modes:
-- Missing federated auth configuration blocks startup.
-- Invalid callback `state` or missing `code` is rejected.
-- Token exchange failure or invalid ID token is rejected.
-
-Acceptance:
-- Federated auth flow is available for `oidc`, `oauth2`, and `saml2` modes.
-- Internal password login endpoint is rejected when auth mode is not `internal`.
-- Admin authorization in federated mode is derived from configured claims/groups policy.
+- Unknown node or mode values are rejected.
 
 ### UC-012: Backup archive export
-
-Happy path:
-1. Admin requests backup run export in `tar` or `tar.gz`.
-2. Service generates archive from recorded backup source state.
-3. Admin downloads archive for external transfer or offline restore workflows.
-
+Summary: Admin exports backup runs as `tar` or `tar.gz`.
+Description: Export outputs deterministic archives for transfer/recovery workflows.
+References: `WF-007`.
+```mermaid
+flowchart LR
+  A[Select backup run] --> B[Choose export format]
+  B --> C[Generate archive]
+  C --> D[Download result]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-012/base-desktop-chromium/01-start.png`
 Failure modes:
-- Missing backup run returns not found.
-- Invalid export format returns validation error.
-- Unauthorized request is rejected.
-
-Acceptance:
-- Export endpoint supports `tar` and `tar.gz`.
-- `tar.gz` uses maximum gzip compression.
-- Export behavior is deterministic for the same backup run content.
-
-### UC-014: Chunk encryption at rest and key rotation
-
-Happy path:
-1. Operator starts NSS with chunk encryption enabled.
-2. New chunk writes are persisted as encrypted envelopes containing key id + nonce + ciphertext.
-3. Reads decrypt payloads using configured keyring and envelope key id.
-4. Operator rotates active key id while retaining previous keys for decryption of older chunks.
-
-Failure modes:
-- Active key id missing from keyring fails startup/runtime initialization.
-- Encrypted chunk references unknown key id and read is rejected.
-- Legacy plaintext payload is rejected when plaintext compatibility is disabled.
-
-Acceptance:
-- New writes are encrypted at rest for object, snapshot, backup, and observability bucket data.
-- Reads remain backward compatible for existing encrypted chunks after active key rotation.
-- Legacy plaintext compatibility is explicit and configurable for migration windows.
+- Invalid export format is rejected.
+- Missing backup run returns not-found.
 
 ### UC-013: Observability demo stack
-
-Happy path:
-1. Operator runs `docker compose up --build` from repository root.
-2. Stack starts one master, three replicas (`slave-delivery`, `slave-backup`, `slave-volume`),
-   Prometheus, Loki, Promtail, Grafana, and demo traffic generator.
-3. Observability bootstrap creates dedicated buckets and credentials in Neemle Storage Service.
-4. Prometheus scrapes node metrics and exports TSDB snapshots to a storage bucket.
-5. Loki stores logs in storage bucket.
-6. Grafana opens with preprovisioned data sources and dashboards showing live cluster data.
-
+Summary: Demo topology boots with metrics/log pipelines.
+Description: Master + replicas + Prometheus/Loki/Grafana start with seeded storage buckets.
+References: `WF-005`.
+```mermaid
+flowchart LR
+  A[docker compose up --build] --> B[Bootstrap observability buckets]
+  B --> C[Prometheus + Loki ingest]
+  C --> D[Grafana dashboards]
+```
+Baseline screenshots:
+- `docs/ui-baselines/UC-013/base-desktop-chromium/01-start.png`
 Failure modes:
-- If observability bootstrap cannot authenticate or create buckets, dependent observability services do not start.
-- If replica join token seeding fails, replicas do not join and distributed read demo remains unavailable.
-
-Acceptance:
-- Root compose topology includes one master and three replicas joined to the same cluster.
-- Grafana has preprovisioned dashboards and data sources for Prometheus and Loki.
-- Loki logs and Prometheus TSDB blocks use distinct Neemle Storage Service buckets.
-
-## Documentation Consistency Rules
-
-- `README.md` must match this document for project name and operational/testing flow.
-- API/document titles must use "Neemle Storage Service" naming.
+- Bootstrap auth or token seeding failure blocks dependent demo surfaces.

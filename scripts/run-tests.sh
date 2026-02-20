@@ -3,8 +3,8 @@ set -eu
 
 RESULTS_ROOT=${NSS_TEST_RESULTS_DIR:-test-results}
 SUMMARY_FILE="${RESULTS_ROOT}/summary.txt"
-ALL_STAGES="api-unit ui-unit api-integration ui-integration external-auth \
-cluster api-curl api-it ui-base ui-e2e runtime production"
+ALL_STAGES="api-unit ui-unit security api-integration ui-integration external-auth \
+  cluster memcheck api-curl api-it ui-base ui-e2e runtime production"
 ENC_STAGES="cluster api-curl api-it ui-base ui-e2e runtime production"
 
 print_supported() {

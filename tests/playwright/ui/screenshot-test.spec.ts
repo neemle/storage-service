@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import type { TestInfo } from '@playwright/test';
 import { expect, test, type Page } from '../fixtures';
 import { typeSlow } from '../helpers';
 
@@ -17,63 +20,48 @@ async function attemptLogin(page: Page): Promise<boolean> {
   }
 }
 
-test.describe('UI Screenshots - Login', () => {
-  test('[UC-001][UC-007] login page - desktop', async ({ page }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(UI_URL);
-    await page.waitForLoadState('networkidle');
-    await page.screenshot({ path: 'test-results/login-desktop.png', fullPage: true });
-  });
-
-  test('[UC-001][UC-007] login page - tablet', async ({ page }) => {
-    await page.setViewportSize({ width: 768, height: 1024 });
-    await page.goto(UI_URL);
-    await page.waitForLoadState('networkidle');
-    await page.screenshot({ path: 'test-results/login-tablet.png', fullPage: true });
-  });
-
-  test('[UC-001][UC-007] login page - mobile', async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: 812 });
-    await page.goto(UI_URL);
-    await page.waitForLoadState('networkidle');
-    await page.screenshot({ path: 'test-results/login-mobile.png', fullPage: true });
-  });
-});
-
-test.describe('UI Screenshots - Main Dashboard', () => {
-  registerDashboardScreenshot(
-    '[UC-001][UC-007] dashboard - desktop',
-    1440,
-    900,
-    'test-results/dashboard-desktop.png'
-  );
-  registerDashboardScreenshot(
-    '[UC-001][UC-007] dashboard - tablet',
-    768,
-    1024,
-    'test-results/dashboard-tablet.png'
-  );
-  registerDashboardScreenshot(
-    '[UC-001][UC-007] dashboard - mobile',
-    375,
-    812,
-    'test-results/dashboard-mobile.png'
-  );
-});
-
-function registerDashboardScreenshot(name: string, width: number, height: number, path: string): void {
-  test(name, async ({ page }) => {
-    await captureDashboardScreenshot(page, width, height, path);
-  });
+function resolveBaselinePath(testInfo: TestInfo, ucId: string, step: string): string {
+  return path.resolve(process.cwd(), '..', '..', 'docs', 'ui-baselines', ucId, testInfo.project.name, `${step}.png`);
 }
 
-async function captureDashboardScreenshot(
-  page: Page,
-  width: number,
-  height: number,
-  path: string
-): Promise<void> {
-  await page.setViewportSize({ width, height });
+async function readBaseline(baselinePath: string): Promise<Buffer | null> {
+  try {
+    return await fs.readFile(baselinePath);
+  } catch {
+    return null;
+  }
+}
+
+async function assertBaseline(page: Page, testInfo: TestInfo, ucId: string, step: string): Promise<void> {
+  const screenshot = await page.screenshot({ fullPage: true });
+  const baselinePath = resolveBaselinePath(testInfo, ucId, step);
+  await fs.mkdir(path.dirname(baselinePath), { recursive: true });
+  const baseline = await readBaseline(baselinePath);
+
+  if (!baseline) {
+    await fs.writeFile(baselinePath, screenshot);
+    return;
+  }
+
+  if (screenshot.equals(baseline)) {
+    return;
+  }
+
+  await fs.writeFile(`${baselinePath}.actual.png`, screenshot);
+  if (process.env.NSS_STRICT_UI_BASELINES === '1') {
+    expect(false, `Baseline mismatch: ${path.relative(process.cwd(), baselinePath)}`).toBeTruthy();
+    return;
+  }
+  await fs.writeFile(baselinePath, screenshot);
+}
+
+test('[UC-001][UC-007] login page baseline', async ({ page }, testInfo) => {
+  await page.goto(UI_URL);
+  await page.waitForLoadState('networkidle');
+  await assertBaseline(page, testInfo, 'UC-001', '01-start');
+});
+
+test('[UC-001][UC-007] dashboard baseline', async ({ page }, testInfo) => {
   await page.goto(UI_URL);
   await page.waitForLoadState('networkidle');
   const loggedIn = await attemptLogin(page);
@@ -81,5 +69,5 @@ async function captureDashboardScreenshot(
     return;
   }
   await page.waitForLoadState('networkidle');
-  await page.screenshot({ path, fullPage: true });
-}
+  await assertBaseline(page, testInfo, 'UC-007', '03-success');
+});

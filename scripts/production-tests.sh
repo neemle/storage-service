@@ -10,6 +10,10 @@ ENV_FILE=${NSS_ENV_FILE:-.env}
 RESULTS_ROOT=${NSS_TEST_RESULTS_DIR:-test-results}
 RESULTS_LABEL=${NSS_RESULTS_LABEL:-production-tests}
 RESULTS_DIR="${RESULTS_ROOT}/${RESULTS_LABEL}"
+BASE_PROJECTS="base-desktop-chromium base-tablet-portrait base-tablet-landscape \
+base-mobile-iphone base-mobile-pixel base-mobile-samsung"
+UI_PROJECTS="ui-desktop-chromium ui-tablet-portrait ui-tablet-landscape \
+ui-mobile-iphone ui-mobile-pixel ui-mobile-samsung"
 
 dotenv_value() {
   key="$1"
@@ -25,6 +29,24 @@ DOTENV_ADMIN_PASS=$(dotenv_value NSS_ADMIN_BOOTSTRAP_PASSWORD "$ENV_FILE" || tru
 
 ADMIN_USER=${NSS_ADMIN_BOOTSTRAP_USER:-${DOTENV_ADMIN_USER:-admin}}
 ADMIN_PASS=${NSS_ADMIN_BOOTSTRAP_PASSWORD:-${DOTENV_ADMIN_PASS:-change-me}}
+
+expand_projects() {
+  expanded=""
+  for token in $(printf '%s' "$PLAYWRIGHT_PROJECTS" | tr ',' ' '); do
+    case "$token" in
+      base)
+        expanded="$expanded $BASE_PROJECTS"
+        ;;
+      ui)
+        expanded="$expanded $UI_PROJECTS"
+        ;;
+      *)
+        expanded="$expanded $token"
+        ;;
+    esac
+  done
+  printf '%s\n' "$expanded" | xargs
+}
 
 copy_playwright_results() {
   mkdir -p "$RESULTS_DIR"
@@ -90,9 +112,9 @@ docker run --rm \
   -e NSS_ADMIN_BOOTSTRAP_PASSWORD="$ADMIN_PASS" \
   -e NSS_TEST_USER="$ADMIN_USER" \
   -e NSS_TEST_PASSWORD="$ADMIN_PASS" \
-  -e NSS_PLAYWRIGHT_PROJECTS="$PLAYWRIGHT_PROJECTS" \
-  -v "$(pwd)/tests/playwright:/tests" \
-  -w /tests \
+  -e NSS_PLAYWRIGHT_PROJECTS="$(expand_projects)" \
+  -v "$(pwd):/workspace" \
+  -w /workspace/tests/playwright \
   "$PLAYWRIGHT_IMAGE" \
   sh -lc '
     set -e
@@ -103,12 +125,14 @@ docker run --rm \
     has_ui=0
     for project in $projects; do
       args="$args --project=$project"
-      if [ "$project" = "base" ]; then
+      case "$project" in
+      base-*)
         has_base=1
-      fi
-      if [ "$project" = "ui" ]; then
+        ;;
+      ui-*)
         has_ui=1
-      fi
+        ;;
+      esac
     done
     npx playwright test $args
     report_file="test-results/playwright-report.json"

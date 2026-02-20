@@ -239,12 +239,12 @@ cargo clippy --workspace -- -D warnings
 - Multiple data directories improve disk utilization and reduce hot-spot risk by spreading chunk writes.
 - Multi-dir layouts also simplify storage expansion by adding new mount points without changing API behavior.
 - Root compose stores temporary local data under:
-  - Postgres: `.local-data/pg`
-  - Master data: `.local-data/master`
+  - Postgres: `.dev-data/pg`
+  - Master data: `.dev-data/master`
   - Replica data:
-    - `.local-data/replicas/replica-1` (`slave-delivery`)
-    - `.local-data/replicas/replica-2` (`slave-backup`)
-    - `.local-data/replicas/replica-3` (`slave-volume`)
+    - `.dev-data/replicas/replica-1` (`slave-delivery`)
+    - `.dev-data/replicas/replica-2` (`slave-backup`)
+    - `.dev-data/replicas/replica-3` (`slave-volume`)
 
 ## Chunk Encryption At Rest
 

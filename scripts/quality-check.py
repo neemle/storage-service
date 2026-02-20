@@ -3,7 +3,7 @@
 
 Rules enforced:
 - max line length: 120
-- max function size: 50 non-empty, non-comment lines
+- max function size: 30 non-empty, non-comment lines
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 MAX_LINE_LEN = 120
-MAX_FUNCTION_LINES = 50
+MAX_FUNCTION_LINES = 30
 
 LINE_EXTS = {
     ".rs",
