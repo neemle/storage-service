@@ -67,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           NSS_TEST_IMAGE=nss-test-runner:ci-cached \
-          NSS_TEST_SHARDS=6 NSS_TEST_THREADS=1 NSS_TEST_PROFILE=test \
+          NSS_TEST_SHARDS=1 NSS_TEST_THREADS=1 NSS_TEST_PROFILE=test \
           NSS_UNIT_COVERAGE_LINES=100 NSS_UNIT_COVERAGE_FUNCTIONS=100 \
           NSS_UNIT_COVERAGE_REGIONS=100 NSS_UNIT_COVERAGE_BRANCHES=100 \
           ./scripts/unit-tests.sh
