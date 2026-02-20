@@ -29,7 +29,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.93"
+          toolchain: "1.93.1"
           components: rustfmt, clippy
 
       - name: Check line and function limits
@@ -60,6 +60,7 @@ jobs:
           file: deploy/test-runner.Dockerfile
           tags: nss-test-runner:ci-cached
           load: true
+          pull: true
           cache-from: type=gha,scope=unit-test-runner
           cache-to: type=gha,mode=max,scope=unit-test-runner,ignore-error=true
 

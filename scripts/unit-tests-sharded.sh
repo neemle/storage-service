@@ -217,7 +217,7 @@ for i in $(seq 1 "$SHARDS"); do
       -e CARGO_HOME=/app/.cargo \
       -e RUSTUP_NONINTERACTIVE=1 \
       -e RUST_BACKTRACE=1 \
-      -e CARGO_INCREMENTAL=1 \
+      -e CARGO_INCREMENTAL=0 \
       -e LLVM_PROFILE_FILE="$LLVM_PROFILE_FILE" \
       -e NSS_POSTGRES_DSN=postgres://nss:nss@postgres:5432/nss_shard_${i}?sslmode=disable \
       -e NSS_REDIS_URL=redis://redis:6379 \
@@ -267,7 +267,7 @@ docker run --rm \
   -e CARGO_HOME=/app/.cargo \
   -e RUSTUP_NONINTERACTIVE=1 \
   -e RUST_BACKTRACE=1 \
-  -e CARGO_INCREMENTAL=1 \
+  -e CARGO_INCREMENTAL=0 \
   -e LLVM_PROFILE_FILE="$PORTAL_PROFILE_FILE" \
   -e NSS_POSTGRES_DSN=postgres://nss:nss@postgres:5432/nss_shard_1?sslmode=disable \
   -e NSS_REDIS_URL=redis://redis:6379 \

@@ -7,6 +7,7 @@
 - Ensure `api/portal.rs` router embedded fallback path is explicitly exercised in unit tests so coverage remains
   deterministic across CI runs.
 - Eliminate sharded-run nondeterminism caused by repeated cluster join token hashes selecting stale consumed rows.
+- Disable incremental compilation during coverage runs so instrumentation is generated deterministically.
 
 ## Non-goals
 - Changing coverage thresholds.
@@ -45,6 +46,7 @@
   hashes from prior tests cannot produce nondeterministic `401` responses in sharded runs.
 - AC-14: Portal handler coverage test for `embedded_ui` must execute through an explicit Tokio runtime in a
   plain `#[test]` to avoid macro-wrapper attribution variance in CI coverage builds.
+- AC-15: Coverage scripts must run with `CARGO_INCREMENTAL=0` to avoid incremental-codegen instrumentation drift.
 
 ## Security Acceptance Criteria
 - SEC-1: Shard test argument expansion only consumes generated internal test names and does not execute arbitrary
@@ -73,6 +75,8 @@
   only unused + unexpired rows before marking token as used.
 - Tokio test macro wrapper attribution for `embedded_ui` helper path can fluctuate in instrumented builds ->
   prevented by explicit-runtime plain test for direct `embedded_ui` execution.
+- Incremental codegen reuses stale instrumented objects and can undercount function/region coverage ->
+  prevented by forcing `CARGO_INCREMENTAL=0` for coverage runs.
 - Coverage under threshold -> fail with existing fail-under gates.
 
 ## Test Matrix
